@@ -13,7 +13,7 @@
 
 DEFINE_string(bitstream, "", "path to bitstream file, run csim if empty");
 
-// Software reference implementation
+// 软件参考实现
 void indexer_top_ref(
     const int L,
     const std::vector<std::vector<ap_int<16>>>& query_vecs,  // [NUM_INDEX_HEAD][HEAD_DIM]
@@ -21,32 +21,32 @@ void indexer_top_ref(
     const std::vector<float>& weights,                        // [NUM_INDEX_HEAD]
     std::vector<int>& topk_ids)                              // [TOP_K]
 {
-    // Compute weighted indexing scores
+    // 计算加权索引分数
     std::vector<std::pair<float, int>> scores(L);
     
     for (int k = 0; k < L; k++) {
         float total_score = 0.0f;
         
         for (int h = 0; h < NUM_INDEX_HEAD; h++) {
-            // Compute dot product qk (using int64_t to avoid overflow)
+            // 计算 qk 点积（使用 int64_t 累加以避免溢出）
             int64_t qk = 0;
             for (int d = 0; d < HEAD_DIM; d++) {
                 qk += query_vecs[h][d].to_int() * key_vecs[k][d].to_int();
             }
             
-            // Apply ReLU
+            // 应用 ReLU 激活
             if (qk < 0) {
                 qk = 0;
             }
             
-            // Weight and accumulate
+            // 加权并累加
             total_score += weights[h] * (float)qk;
         }
 
         scores[k] = std::make_pair(total_score, k);
     }
     
-    // Find top K
+    // 找出分数最高的 K 个索引
     std::sort(scores.begin(), scores.end(),
                       [](const auto& a, const auto& b) { return a.first > b.first; });
     
@@ -59,7 +59,7 @@ void indexer_top_ref(
 int main(int argc, char* argv[]) {
     gflags::ParseCommandLineFlags(&argc, &argv, true);
     
-    int L = 4096;  // Number of key vectors
+    int L = 4096;  // Key 向量的数量
     if (argc > 1) {
         L = std::atoi(argv[1]);
     }
@@ -70,12 +70,12 @@ int main(int argc, char* argv[]) {
     std::cout << "HEAD_DIM: " << HEAD_DIM << std::endl;
     std::cout << "TOP_K: " << TOP_K << std::endl;
     
-    // Initialize random number generator
-    std::mt19937 gen(42);  // Fixed seed for reproducibility
-    std::uniform_int_distribution<int> dis_int(-128, 127);  // Range for ap_int<16>
+    // 初始化随机数生成器
+    std::mt19937 gen(42);  // 使用固定种子，保证结果可复现
+    std::uniform_int_distribution<int> dis_int(-128, 127);  // 用于生成 ap_int<16> 测试数据的取值范围
     std::uniform_real_distribution<float> dis_float(0.0f, 2.0f);
     
-    // Generate random query vectors (16 heads x 128 dimensions) as integers
+    // 生成整数类型的随机 Query 向量（16 个头，每个头 128 维）
     std::vector<std::vector<ap_int<16>>> query_vecs(NUM_INDEX_HEAD, std::vector<ap_int<16>>(HEAD_DIM));
     for (int h = 0; h < NUM_INDEX_HEAD; h++) {
         for (int d = 0; d < HEAD_DIM; d++) {
@@ -83,7 +83,7 @@ int main(int argc, char* argv[]) {
         }
     }
     
-    // Generate random key vectors (4096 x 128 dimensions) as integers
+    // 生成整数类型的随机 Key 向量（默认 4096 个向量，每个向量 128 维）
     std::vector<std::vector<ap_int<16>>> key_vecs(L, std::vector<ap_int<16>>(HEAD_DIM));
     for (int k = 0; k < L; k++) {
         for (int d = 0; d < HEAD_DIM; d++) {
@@ -91,29 +91,29 @@ int main(int argc, char* argv[]) {
         }
     }
     
-    // Generate random weights (16 weights for 16 heads)
+    // 生成随机权重（16 个头对应 16 个权重）
     std::vector<float> weights(NUM_INDEX_HEAD);
     for (int h = 0; h < NUM_INDEX_HEAD; h++) {
-        weights[h] = dis_float(gen);  // Use positive weights
+        weights[h] = dis_float(gen);  // 使用正权重
     }
     
-    // Prepare hardware inputs
-    // qk_vec_mem layout: 
-    // - First: Query vectors packed across NUM_INDEX_HEAD dimension
-    //   For each of HEAD_DIM elements, pack all 16 heads together in one vec_t
-    // - Then: Key vectors packed across L dimension
-    //   For each of HEAD_DIM elements, pack 16 consecutive keys together in one vec_t
-    const int query_lines = HEAD_DIM;  // HEAD_DIM lines, each containing 16 heads
-    const int key_lines = L * HEAD_DIM / 16;  // L vectors * HEAD_DIM / 16 elements per vec_t
+    // 准备硬件格式的输入数据
+    // qk_vec_mem 的内存布局： 
+    // - 首先：沿 NUM_INDEX_HEAD 维度打包 Query 向量
+    //   对于 HEAD_DIM 中的每个维度，将 16 个头的对应元素打包到一个 vec_t 中
+    // - 然后：沿 L 维度打包 Key 向量
+    //   对于 HEAD_DIM 中的每个维度，将连续 16 个 Key 的对应元素打包到一个 vec_t 中
+    const int query_lines = HEAD_DIM;  // 共 HEAD_DIM 行，每行包含 16 个头的对应元素
+    const int key_lines = L * HEAD_DIM / 16;  // L 个向量 × HEAD_DIM 维 ÷ 每个 vec_t 的 16 个元素
     const int total_qk_lines = query_lines + key_lines;
     
-    // Allocate memory for 8 channels
+    // 为 8 个通道分配内存
     std::vector<std::vector<tapa::vec_t<ap_int<16>, 16>>> qk_vec_hw(8);
     for (int ch = 0; ch < 8; ch++) {
         qk_vec_hw[ch].resize(total_qk_lines / 8);
     }
     
-    // Pack query vectors: transpose to [HEAD_DIM][NUM_INDEX_HEAD]
+    // 打包 Query 向量：转置为 [HEAD_DIM][NUM_INDEX_HEAD]
     for (int d = 0; d < HEAD_DIM; d++) {
         tapa::vec_t<ap_int<16>, 16> packed;
         for (int h = 0; h < NUM_INDEX_HEAD; h++) {
@@ -124,7 +124,7 @@ int main(int argc, char* argv[]) {
         qk_vec_hw[ch][idx] = packed;
     }
     
-    // Pack key vectors: for each dimension, pack 16 consecutive keys
+    // 打包 Key 向量：对每个维度，将连续 16 个 Key 的对应元素打包
     for (int k = 0; k < L; k += 16) {
         for (int d = 0; d < HEAD_DIM; d++) {
             tapa::vec_t<ap_int<16>, 16> packed;
@@ -138,18 +138,18 @@ int main(int argc, char* argv[]) {
         }
     }
     
-    // Pack weights into hardware format
+    // 将权重打包为硬件所需的格式
     std::vector<tapa::vec_t<float, 16>> weight_hw(1);
     for (int i = 0; i < NUM_INDEX_HEAD; i++) {
         weight_hw[0][i] = weights[i];
     }
     
-    // Allocate output memory
+    // 分配输出内存
     std::vector<tapa::vec_t<int, 16>> topk_id_hw(TOP_K / 16);
     
     std::cout << "\nRunning hardware kernel..." << std::endl;
     
-    // Invoke the kernel
+    // 调用内核
     int64_t kernel_time_ns = 0;
     kernel_time_ns = tapa::invoke(indexer_top, FLAGS_bitstream,
                  L,
@@ -161,7 +161,7 @@ int main(int argc, char* argv[]) {
     std::clog << "kernel time: " << kernel_time_ns * 1e-9 << " s" << std::endl;
 
     
-    // Extract hardware results
+    // 提取内核输出结果
     std::vector<int> topk_ids_hw(TOP_K);
     for (int i = 0; i < TOP_K / 16; i++) {
         for (int j = 0; j < 16; j++) {
@@ -169,7 +169,7 @@ int main(int argc, char* argv[]) {
         }
     }
     
-    // Compute software reference with fixed-point conversion for fair comparison
+    // 计算软件参考结果（使用与内核相同的整数输入进行比较）
     std::cout << "\nRunning software reference..." << std::endl;
     
     std::vector<int> topk_ids_sw;
@@ -177,7 +177,7 @@ int main(int argc, char* argv[]) {
     
     std::cout << "Software reference completed." << std::endl;
     
-    // Compare results
+    // 比较结果
     std::cout << "\n=== Results ===" << std::endl;
     std::cout << "Hardware Top-64 IDs:" << std::endl;
     for (int i = 0; i < std::min(64, TOP_K); i++) {
@@ -191,8 +191,8 @@ int main(int argc, char* argv[]) {
     }
     std::cout << "..." << std::endl;
     
-    // Check correctness
-    // Since the top-K order might vary slightly due to ties, we check if the sets overlap significantly
+    // 检查正确性
+    // 由于分数相同时 Top-K 的顺序可能略有不同，这里检查两个索引集合的重合程度
     std::set<int> hw_set(topk_ids_hw.begin(), topk_ids_hw.end());
     std::set<int> sw_set(topk_ids_sw.begin(), topk_ids_sw.end());
     
@@ -206,7 +206,7 @@ int main(int argc, char* argv[]) {
     float overlap_ratio = static_cast<float>(matches) / TOP_K;
     std::cout << "\nOverlap: " << matches << "/" << TOP_K << " (" << (overlap_ratio * 100) << "%)" << std::endl;
     
-    // Check if exact match
+    // 检查索引及其顺序是否完全一致
     bool exact_match = true;
     for (int i = 0; i < TOP_K; i++) {
         if (topk_ids_hw[i] != topk_ids_sw[i]) {

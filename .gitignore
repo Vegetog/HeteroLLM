@@ -8,3 +8,4 @@
 */*/*.log
 .agents
 __pycache__
+.venv/

@@ -1,15 +1,17 @@
 /**
  * @file paged_attention.h
- * @brief Paged attention memory manager for block sparse attention
+ * @brief 用于分块稀疏注意力的分页注意力内存管理器
  * 
- * Provides a memory manager that connects:
+ * 该文件提供一个内存管理器，将下列步骤串联起来：
  * PagedKVIndexBuilder -> InnerProductCompute -> TopKRetrieval -> BlockSparseAttention
  * 
- * This implements block-sparse attention where:
- * 1. KV cache is partitioned into pages and indexed
- * 2. Query is matched against page indices using inner product
- * 3. Top-K relevant pages are selected
- * 4. Sparse attention is computed only on selected pages
+ * 这条流水线实现分块稀疏注意力：
+ * 1. 将 KV Cache 按页切分，并为每一页生成轻量索引
+ * 2. 通过内积计算 Query 与各页索引的相关性
+ * 3. 选出相关性最高的 Top-K 个页
+ * 4. 仅对被选中页内的 K/V 计算最终注意力
+ *
+ * 注意：页索引的内积只用于粗筛选，不是最终的 QK^T 注意力分数。
  */
 
 #ifndef HETEROMM_DEPLOY_PAGED_ATTENTION_H_
@@ -22,45 +24,45 @@ namespace heteromm {
 namespace deploy {
 
 /**
- * @brief Type alias for the paged attention memory manager
+ * @brief 分页注意力内存管理器的类型别名
  * 
- * Data flow:
- * - RawData (RetrievedData): KVCacheData<float> - the KV cache
- * - Memory: FlatIndexMemory<float> - paged index of keys
- * - Query: VectorQuery<float> - the attention query vector
- * - Score: VectorScore<float> - similarity scores per page
- * - Index: TopKIndex - indices of top-K relevant pages
- * - Input: VectorInputOutputData<float> - query for attention computation
- * - Output: VectorInputOutputData<float> - attention output
+ * 数据流：
+ * - RawData (RetrievedData): KVCacheData<float> - 原始 KV Cache
+ * - Memory: FlatIndexMemory<float> - 由每个页的 Key 生成的分页索引
+ * - Query: VectorQuery<float> - 用于页级粗筛选的查询向量
+ * - Score: VectorScore<float> - Query 与每个页索引的相似度
+ * - Index: TopKIndex - 最相关的 Top-K 个页编号
+ * - Input: VectorInputOutputData<float> - 计算最终注意力时使用的 Query
+ * - Output: VectorInputOutputData<float> - 稀疏注意力输出
  */
 using PagedAttentionManager = MemoryManager<
-    data_type::KVCacheData<float>,           // RetrievedData: KV cache
-    data_type::FlatIndexMemory<float>,       // Memory: Paged key index
-    data_type::VectorQuery<float>,           // Query: Attention query
-    data_type::VectorScore<float>,           // Score: Page scores
-    data_type::TopKIndex,                    // Index: Top-K page indices
-    data_type::VectorInputOutputData<float>, // Input: Query for attention
-    data_type::VectorInputOutputData<float>  // Output: Attention result
+    data_type::KVCacheData<float>,           // RetrievedData：原始 KV Cache
+    data_type::FlatIndexMemory<float>,       // Memory：分页 Key 索引
+    data_type::VectorQuery<float>,           // Query：页级粗筛选查询向量
+    data_type::VectorScore<float>,           // Score：每个页的相关性分数
+    data_type::TopKIndex,                    // Index：Top-K 页编号
+    data_type::VectorInputOutputData<float>, // Input：最终注意力查询向量
+    data_type::VectorInputOutputData<float>  // Output：稀疏注意力结果
 >;
 
 /**
- * @brief Concrete paged attention manager with default step implementations
+ * @brief 带默认步骤实现的分页注意力管理器
  * 
- * This class provides a ready-to-use paged attention implementation with
- * configurable parameters for page size, projection weights, and top-K.
+ * 该类将四个步骤组装成一条完整流水线，并允许配置
+ * 页大小、投影权重和 Top-K 数量。
  * 
- * Usage:
+ * 使用示例：
  * @code
- *   // Create manager with page_size=16, top_k=8
- *   auto weight = create_projection_weight(head_dim, proj_dim);
- *   PagedAttention attn(weight, 16, 8);
+ *   // 创建 page_size=16、top_k=8 的管理器
+ *   auto weight = create_random_projection_weight(head_dim, proj_dim);
+ *   PagedAttention attn("schedule.json", weight, 16, 8);
  *   
- *   // Build index from KV cache
+ *   // 从 KV Cache 构建分页索引，通常可在 Query 到来前完成
  *   KVCacheData<float> kv_cache = ...;
  *   FlatIndexMemory<float> index;
  *   attn.build_memory(kv_cache, index);
  *   
- *   // Run attention
+ *   // 运行页级打分、Top-K 检索和最终稀疏注意力
  *   VectorQuery<float> query = ...;
  *   VectorInputOutputData<float> input = ...;
  *   VectorInputOutputData<float> output;
@@ -70,12 +72,12 @@ using PagedAttentionManager = MemoryManager<
 class PagedAttention : public PagedAttentionManager {
 public:
     /**
-     * @brief Construct a paged attention manager
+     * @brief 构造并完整配置一个分页注意力管理器
      * 
-     * @param schedule_path Path to the schedule JSON file
-     * @param projection_weight Weight matrix for projecting pooled keys [proj_dim x head_dim]
-     * @param page_size Number of tokens per page for average pooling
-     * @param top_k Number of top pages to select for sparse attention
+     * @param schedule_path 调度规则 JSON 文件路径
+     * @param projection_weight 将池化后 Key 投影到索引空间的权重矩阵 [proj_dim x head_dim]
+     * @param page_size 每个页包含的 token 数，也是平均池化的粒度
+     * @param top_k 稀疏注意力需要选取的页数
      */
     PagedAttention(
         const std::string& schedule_path,
@@ -88,33 +90,33 @@ public:
         top_k_(top_k) {}
     
     /**
-     * @brief Default constructor with no initialization
-     * Must call set_parameters before use.
-     * @param schedule_path Path to the schedule JSON file (optional)
+     * @brief 不初始化具体参数的默认构造函数
+     * 使用前需通过各 set_* 方法补齐参数。
+     * @param schedule_path 调度规则 JSON 文件路径（可选）
      */
     explicit PagedAttention(const std::string& schedule_path = "") 
         : PagedAttentionManager(schedule_path) {}
     
     ~PagedAttention() override = default;
     
-    // ===== Parameter accessors =====
+    // ===== 参数访问与修改 =====
     
     void set_projection_weight(const std::vector<std::vector<float>>& weight) {
         projection_weight_ = weight;
-        // Reset step to pick up new weight
+        // 建索引步骤内部持有投影权重，需重建才能使用新权重。
         build_memory_step_.reset();
     }
     
     void set_page_size(size_t page_size) {
         page_size_ = page_size;
-        // Reset steps that depend on page_size
+        // 建索引和展开 Top-K 页都依赖 page_size，因此两个步骤都需重建。
         build_memory_step_.reset();
         apply_memory_step_.reset();
     }
     
     void set_top_k(size_t top_k) {
         top_k_ = top_k;
-        // Reset retrieval step
+        // Top-K 是检索步骤的构造参数，修改后需重建该步骤。
         memory_retrieval_step_.reset();
     }
     
@@ -137,11 +139,11 @@ public:
     }
 
 protected:
-    // ===== Factory methods - create step handlers =====
+    // ===== 工厂方法：为四阶段流水线创建具体步骤 =====
     
     /**
-     * @brief Create PagedKVIndexBuilder step
-     * Builds paged index from KV cache using average pooling + projection
+     * @brief 创建 PagedKVIndexBuilder（Prepare Memory）
+     * 对每个页内的 Key 做平均池化和线性投影，生成一个轻量页索引。
      */
     std::shared_ptr<BuildMemoryStepT> create_build_memory_step() override {
         return std::make_shared<step::PagedKVIndexBuilder>(
@@ -151,24 +153,24 @@ protected:
     }
     
     /**
-     * @brief Create InnerProductCompute step
-     * Computes inner product between query and page indices
+     * @brief 创建 InnerProductCompute（Compute Relevancy）
+     * 计算 Query 与所有页索引的内积，为每个页产生一个粗筛选分数。
      */
     std::shared_ptr<ComputeScoreStepT> create_compute_score_step() override {
         return std::make_shared<step::InnerProductCompute>();
     }
     
     /**
-     * @brief Create TopKRetrieval step
-     * Selects top-K pages with highest scores
+     * @brief 创建 TopKRetrieval（Retrieval）
+     * 从页级分数中选出最高的 Top-K 个页编号。
      */
     std::shared_ptr<MemoryRetrievalStepT> create_memory_retrieval_step() override {
         return std::make_shared<step::TopKRetrieval>(top_k_);
     }
     
     /**
-     * @brief Create BlockSparseAttention step
-     * Computes attention only on selected pages
+     * @brief 创建 BlockSparseAttention（Apply Memory）
+     * 只展开 Top-K 页内的 token，并使用它们的 K/V 计算最终注意力。
      */
     std::shared_ptr<ApplyMemoryStepT> create_apply_memory_step() override {
         return std::make_shared<step::BlockSparseAttention>(page_size_);
@@ -181,11 +183,12 @@ private:
 };
 
 /**
- * @brief Builder for creating configured paged attention managers
+ * @brief 用于创建已配置分页注意力管理器的 Builder
  * 
- * Provides a fluent interface for configuring a paged attention manager.
+ * 提供链式调用接口，将调度文件、投影权重、页大小和 Top-K
+ * 参数集中后再构造 PagedAttention。
  * 
- * Usage:
+ * 使用示例：
  * @code
  *   auto attn = PagedAttentionBuilder()
  *       .with_schedule_path("schedule.json")
@@ -200,7 +203,7 @@ public:
     PagedAttentionBuilder() = default;
     
     /**
-     * @brief Set the schedule configuration file path
+     * @brief 设置调度规则文件路径
      */
     PagedAttentionBuilder& with_schedule_path(const std::string& path) {
         schedule_path_ = path;
@@ -208,7 +211,7 @@ public:
     }
     
     /**
-     * @brief Set the projection weight matrix
+     * @brief 设置页索引的投影权重矩阵
      */
     PagedAttentionBuilder& with_projection_weight(
         const std::vector<std::vector<float>>& weight
@@ -218,7 +221,7 @@ public:
     }
     
     /**
-     * @brief Set the page size (tokens per page)
+     * @brief 设置页大小（每页 token 数）
      */
     PagedAttentionBuilder& with_page_size(size_t page_size) {
         page_size_ = page_size;
@@ -226,7 +229,7 @@ public:
     }
     
     /**
-     * @brief Set the number of top pages to select
+     * @brief 设置需要选取的 Top-K 页数
      */
     PagedAttentionBuilder& with_top_k(size_t top_k) {
         top_k_ = top_k;
@@ -234,7 +237,7 @@ public:
     }
     
     /**
-     * @brief Build and return the configured manager
+     * @brief 根据当前累积的参数构造并返回管理器
      */
     std::shared_ptr<PagedAttention> build() {
         return std::make_shared<PagedAttention>(
@@ -253,19 +256,19 @@ private:
 };
 
 /**
- * @brief Create a paged attention builder
+ * @brief 创建一个分页注意力 Builder
  */
 inline PagedAttentionBuilder create_paged_attention() {
     return PagedAttentionBuilder();
 }
 
 /**
- * @brief Helper to create a random projection weight matrix
+ * @brief 创建随机投影权重矩阵的辅助函数
  * 
- * @param head_dim Input dimension (head dimension)
- * @param proj_dim Output dimension (projection dimension)
- * @param seed Random seed for reproducibility
- * @return Weight matrix [proj_dim x head_dim]
+ * @param head_dim 输入维度（Attention head 维度）
+ * @param proj_dim 输出维度（页索引的投影维度）
+ * @param seed 用于复现结果的随机种子
+ * @return 形状为 [proj_dim x head_dim] 的权重矩阵
  */
 inline std::vector<std::vector<float>> create_random_projection_weight(
     size_t head_dim,
@@ -274,14 +277,14 @@ inline std::vector<std::vector<float>> create_random_projection_weight(
 ) {
     std::vector<std::vector<float>> weight(proj_dim, std::vector<float>(head_dim));
     
-    // Simple LCG random number generator for reproducibility
+    // 使用简单的 LCG 伪随机数生成器，保证给定 seed 时结果可复现。
     unsigned int state = seed;
     auto next_random = [&state]() -> float {
         state = state * 1103515245 + 12345;
         return static_cast<float>((state >> 16) & 0x7FFF) / 32767.0f - 0.5f;
     };
     
-    // Xavier/Glorot initialization scale
+    // Xavier/Glorot 初始化缩放系数，用于控制投影权重的数值范围。
     float scale = std::sqrt(2.0f / (head_dim + proj_dim));
     
     for (size_t i = 0; i < proj_dim; ++i) {

@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
-RAG Pipeline Script with BM25S Retriever and vLLM Generator
+使用 BM25S 检索器和 vLLM 生成器的 RAG 流水线脚本
 
-Supports two modes:
-1. Simple RAG: Single retrieval + generation
-2. Fix-sentence RAG: Retrieval after each generated sentence
+支持两种模式：
+1. 简单 RAG：检索一次后生成回答
+2. 逐句检索 RAG：每生成一句话后再次检索
 
-Usage:
+用法：
     python rag_pipeline.py --mode simple
     python rag_pipeline.py --mode fix-sentence --corpus BeIR/hotpotqa --model meta-llama/Llama-3.2-1B
 """
@@ -32,7 +32,7 @@ from run_bm25_loader import run_bm25_loader
 from bm25_loader_xrt import *
 import pyxrt
 
-# Configure logging
+# 配置日志
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
@@ -42,18 +42,18 @@ logger = logging.getLogger(__name__)
 
 
 class LatencyTracker:
-    """Track and report latency metrics."""
+    """记录并报告延迟指标。"""
     
     def __init__(self):
         self.metrics = {}
         self.start_times = {}
     
     def start(self, name: str):
-        """Start timing a metric."""
+        """开始对指定指标计时。"""
         self.start_times[name] = time.perf_counter()
     
     def stop(self, name: str) -> float:
-        """Stop timing and record the metric."""
+        """停止计时并记录指标。"""
         if name not in self.start_times:
             logger.warning(f"Timer '{name}' was never started")
             return 0.0
@@ -65,7 +65,7 @@ class LatencyTracker:
         return elapsed
     
     def get_summary(self) -> dict:
-        """Get summary statistics for all metrics."""
+        """获取所有指标的统计摘要。"""
         summary = {}
         for name, times in self.metrics.items():
             summary[name] = {
@@ -78,7 +78,7 @@ class LatencyTracker:
         return summary
     
     def print_summary(self):
-        """Print formatted summary of all metrics."""
+        """按格式打印所有指标的统计摘要。"""
         summary = self.get_summary()
         logger.info("=" * 60)
         logger.info("LATENCY METRICS SUMMARY")
@@ -94,7 +94,7 @@ class LatencyTracker:
 
 
 class BM25Retriever:
-    """BM25S-based document retriever with custom tokenizer."""
+    """使用自定义分词器的 BM25S 文档检索器。"""
     
     def __init__(self, corpus_name: str, cache_dir: str = "./cache", 
                  retriever_tokenizer_name: str = "EleutherAI/gpt-j-6b", device: str = 'cuda'):
@@ -106,43 +106,43 @@ class BM25Retriever:
         self.corpus_ids = None
         self.latency = LatencyTracker()
         self.retriever_tokenizer_name = retriever_tokenizer_name
-        self.hf_tokenizer = None  # HuggingFace tokenizer for BM25
+        self.hf_tokenizer = None  # 用于 BM25 的 HuggingFace 分词器
         self.vocab_dict = {}
         self.device = device
         self.fpga_setup = None
     
     def _get_cache_path(self) -> Path:
-        """Get path for cached tokenized corpus."""
+        """获取已分词语料的缓存路径。"""
         safe_name = self.corpus_name.replace("/", "_").replace("\\", "_")
         tokenizer_suffix = self.retriever_tokenizer_name.replace("/", "_").replace("\\", "_")
         return self.cache_dir / f"{safe_name}_bm25s_{tokenizer_suffix}"
     
     def _load_corpus(self) -> Tuple[List[str], List[str]]:
-        """Load corpus from HuggingFace datasets."""
+        """从 HuggingFace Datasets 加载语料。"""
         logger.info(f"Loading corpus: {self.corpus_name}")
         self.latency.start("corpus_loading")
         
         try:
-            # Load BeIR dataset with corpus subset
+            # 加载 BeIR 数据集的 corpus 子集
             if "BeIR" in self.corpus_name or "beir" in self.corpus_name.lower():
                 dataset_name = self.corpus_name
                 dataset = load_dataset(dataset_name, "corpus", trust_remote_code=True)
                 
-                # BeIR datasets typically have 'corpus' split
+                # BeIR 数据集通常包含 'corpus' 划分
                 if "corpus" in dataset:
                     corpus_data = dataset["corpus"]
                 elif "train" in dataset:
                     corpus_data = dataset["train"]
                 else:
-                    # Use first available split
+                    # 使用第一个可用的数据划分
                     split_name = list(dataset.keys())[0]
                     corpus_data = dataset[split_name]
                 
-                # Extract text and IDs
+                # 提取正文和 ID
                 texts = []
                 ids = []
                 for item in corpus_data:
-                    # Combine title and text if available
+                    # 如果有标题和正文，则将它们合并
                     text_parts = []
                     if "title" in item and item["title"]:
                         text_parts.append(item["title"])
@@ -153,7 +153,7 @@ class BM25Retriever:
                         texts.append(" ".join(text_parts))
                         ids.append(item.get("_id", str(len(ids))))
             else:
-                # Generic dataset loading
+                # 加载通用数据集
                 dataset = load_dataset(self.corpus_name, trust_remote_code=True)
                 split_name = list(dataset.keys())[0]
                 corpus_data = dataset[split_name]
@@ -161,7 +161,7 @@ class BM25Retriever:
                 texts = []
                 ids = []
                 for i, item in enumerate(corpus_data):
-                    # Try common text field names
+                    # 尝试常见的正文字段名
                     text = item.get("text") or item.get("content") or item.get("document") or str(item)
                     texts.append(text)
                     ids.append(item.get("id", str(i)))
@@ -177,18 +177,18 @@ class BM25Retriever:
             raise
     
     def _tokenize_with_hf(self, texts: List[str], batch_size: int = 1000) -> List[List[str]]:
-        """Tokenize texts using the HuggingFace tokenizer (GPT-J by default).
+        """使用 HuggingFace 分词器（默认为 GPT-J）对文本分词。
         
-        Uses batch tokenization for efficiency. Returns token IDs as strings,
-        which BM25S treats as vocabulary terms. This is much faster than
-        decoding each token back to its string form.
+        采用批量分词以提高效率。将 token ID 转为字符串返回，
+        BM25S 会将这些字符串视为词表词项。这样比逐个将 token
+        解码回对应文本更快。
         
-        Args:
-            texts: List of texts to tokenize
-            batch_size: Number of texts to process in each batch
+        参数：
+            texts：待分词的文本列表
+            batch_size：每批处理的文本数量
             
-        Returns:
-            List of token lists (token IDs as strings) for BM25S compatibility.
+        返回：
+            token 列表组成的列表；token ID 以字符串表示，以兼容 BM25S。
         """
         if self.hf_tokenizer is None:
             logger.info(f"Loading retriever tokenizer: {self.retriever_tokenizer_name}")
@@ -196,29 +196,29 @@ class BM25Retriever:
                 self.retriever_tokenizer_name,
                 trust_remote_code=True
             )
-            # Ensure tokenizer has padding token for batch processing
+            # 确保分词器具有填充 token，以支持批处理
             if self.hf_tokenizer.pad_token is None:
                 self.hf_tokenizer.pad_token = self.hf_tokenizer.eos_token
         
         tokenized = []
         num_texts = len(texts)
         
-        # Process in batches for efficiency
+        # 分批处理以提高效率
         for start_idx in range(0, num_texts, batch_size):
             end_idx = min(start_idx + batch_size, num_texts)
             batch_texts = texts[start_idx:end_idx]
             
-            # Batch tokenization - much faster than one-by-one
+            # 批量分词，比逐条分词更快
             batch_result = self.hf_tokenizer(
                 batch_texts,
                 add_special_tokens=False,
                 return_attention_mask=False,
-                padding=False,  # Don't pad, we want variable length
+                padding=False,  # 不进行填充，保留可变长度
                 truncation=False,
             )
             
-            # Convert token IDs to strings for BM25S
-            # BM25S treats each unique string as a vocabulary term
+            # 将 token ID 转为字符串，供 BM25S 使用
+            # BM25S 将每个不同的字符串视为一个词表词项
             for token_ids in batch_result['input_ids']:
                 tokens = [str(tid) for tid in token_ids]
                 tokenized.append(tokens)
@@ -229,11 +229,11 @@ class BM25Retriever:
         return tokenized
     
     def initialize(self):
-        """Initialize the retriever, loading from cache if available."""
+        """初始化检索器；如果存在缓存，则从缓存加载。"""
         cache_path = self._get_cache_path()
 
         if self.device == 'hybrid':
-            # FPGA setup
+            # 初始化 FPGA
             fpga_setup = fpga_retriever_setup(
                 bitstream="../indexer_bm25.xclbin",
                 export_dir="./export"
@@ -247,11 +247,11 @@ class BM25Retriever:
             self.latency.start("cache_loading")
             
             try:
-                # Load BM25 index WITHOUT corpus - we manage corpus_texts separately
-                # This prevents bm25s from trying to return documents during retrieve()
+                # 只加载 BM25 索引，不加载正文；corpus_texts 由本类单独管理
+                # 避免 bm25s 在 retrieve() 中尝试直接返回文档
                 self.retriever = bm25s.BM25.load(cache_path, load_corpus=False)
                 
-                # Load corpus texts and IDs from our own metadata file
+                # 从单独保存的元数据文件加载文档正文和 ID
                 corpus_meta_path = cache_path / "corpus_meta.pkl"
                 if corpus_meta_path.exists():
                     with open(corpus_meta_path, "rb") as f:
@@ -261,11 +261,11 @@ class BM25Retriever:
                 else:
                     raise FileNotFoundError("corpus_meta.pkl not found in cache")
                 
-                # Validate that corpus_texts was loaded properly
+                # 检查 corpus_texts 是否已正确加载
                 if self.corpus_texts is None or len(self.corpus_texts) == 0:
                     raise ValueError("Corpus texts are empty after loading from cache")
                 
-                # Load vocabulary dictionary from cache if available
+                # 如果存在词表缓存，则加载词表映射
                 vocab_path = cache_path / "vocab.index.json"
                 if vocab_path.exists():
                     with open(vocab_path, "r") as f:
@@ -282,19 +282,19 @@ class BM25Retriever:
                 self.latency.stop("cache_loading")
                 logger.warning(f"Failed to load cache, rebuilding: {e}")
         
-        # Load and tokenize corpus
+        # 加载语料并分词
         self.corpus_texts, self.corpus_ids = self._load_corpus()
         
         logger.info(f"Tokenizing corpus with {self.retriever_tokenizer_name} tokenizer...")
         self.latency.start("tokenization")
         
-        # Tokenize corpus using HuggingFace tokenizer (GPT-J)
+        # 使用 HuggingFace 分词器（GPT-J）对语料分词
         corpus_tokens = self._tokenize_with_hf(self.corpus_texts)
         
         elapsed = self.latency.stop("tokenization")
         logger.info(f"Tokenization completed in {elapsed*1000:.2f} ms")
         
-        # Create BM25 retriever
+        # 创建 BM25 检索器
         logger.info("Building BM25 index...")
         self.latency.start("indexing")
         
@@ -304,14 +304,14 @@ class BM25Retriever:
         elapsed = self.latency.stop("indexing")
         logger.info(f"Indexing completed in {elapsed*1000:.2f} ms")
         
-        # Save to cache
+        # 保存到缓存
         logger.info(f"Saving tokenized corpus to cache: {cache_path}")
         self.latency.start("cache_saving")
         
-        # Save BM25 index without corpus - we manage corpus separately in corpus_meta.pkl
+        # 保存 BM25 索引，不包含正文；正文单独保存在 corpus_meta.pkl 中
         self.retriever.save(cache_path)
         
-        # Save corpus metadata (original texts and IDs)
+        # 保存语料元数据（原始正文和 ID）
         corpus_meta_path = cache_path / "corpus_meta.pkl"
         with open(corpus_meta_path, "wb") as f:
             pickle.dump({"texts": self.corpus_texts, "ids": self.corpus_ids}, f)
@@ -320,7 +320,7 @@ class BM25Retriever:
         logger.info(f"Cache saved in {elapsed*1000:.2f} ms")
     
     def get_documents(self, doc_ids: List[int]) -> List[Tuple[str, float]]:
-        """Get document texts by their indices."""
+        """根据文档下标获取正文。"""
         if self.corpus_texts is None:
             raise RuntimeError("Corpus texts not loaded. Call initialize() first.")
         
@@ -334,14 +334,14 @@ class BM25Retriever:
         return docs
     
     def retrieve(self, query: str, k: int = 64) -> List[Tuple[str, float]]:
-        """Retrieve top-k documents for a query."""
+        """检索与查询最相关的 Top-K 文档。"""
         if self.retriever is None:
             raise RuntimeError("Retriever not initialized. Call initialize() first.")
         
         if self.corpus_texts is None or len(self.corpus_texts) == 0:
             raise RuntimeError("Corpus texts not loaded. Re-initialize the retriever.")
         
-        # Handle empty or very short queries
+        # 处理空查询或很短的查询
         if not query or len(query.strip()) == 0:
             logger.warning("Empty query provided, returning empty results")
             return []
@@ -349,7 +349,7 @@ class BM25Retriever:
         query_preview = query[:100] if len(query) > 100 else query
         logger.info(f"Retrieving top-{k} documents for query: '{query_preview}...'")
         
-        # Tokenize query using HuggingFace tokenizer (GPT-J)
+        # 使用 HuggingFace 分词器（GPT-J）对查询分词
         query_tokens = self._tokenize_with_hf([query])
         logger.info(f"Tokenized query to {len(query_tokens[0])} tokens")
         logger.info(f"query tokens ids: {query_tokens[0]}")
@@ -373,11 +373,11 @@ class BM25Retriever:
             logger.info(f"Retrieval completed in {elapsed:.2f} ms")
             logger.info(f"top indices: {indices}")
             
-            # Get document texts with safety checks
-            # results and scores are numpy arrays of shape (n_queries, k)
+            # 获取文档正文，并检查下标有效性
+            # results 和 scores 是形状为 (n_queries, k) 的 NumPy 数组
             retrieved_docs = []
             try:
-                # results[0] gives the indices for the first (and only) query
+                # results[0] 给出第一个（也是唯一一个）查询的文档下标
                 for i in range(len(indices)):
                     idx = int(indices[i])
                     if 0 <= idx < len(self.corpus_texts):
@@ -389,7 +389,7 @@ class BM25Retriever:
         else:
             self.latency.start("retrieval")
             
-            # Adjust k if corpus is smaller
+            # 当语料数量不足时调整 k
             effective_k = min(k, len(self.corpus_texts))
             if effective_k < k:
                 logger.warning(f"Corpus size ({len(self.corpus_texts)}) is smaller than k ({k}), using k={effective_k}")
@@ -399,19 +399,19 @@ class BM25Retriever:
                 self.latency.stop("retrieval")
                 return []
             
-            # Retrieve - returns numpy arrays of shape (n_queries, k)
-            # Note: We don't pass corpus here; bm25s returns indices which we map to our corpus_texts
+            # 执行检索，返回形状为 (n_queries, k) 的 NumPy 数组
+            # 注意：这里不传入正文；bm25s 返回下标，再由本类映射到 corpus_texts
             results, scores = self.retriever.retrieve(query_tokens, k=effective_k)
             
             elapsed = self.latency.stop("retrieval") * 1000
             logger.info(f"Retrieval completed in {elapsed:.2f} ms")
             logger.info(f"top indices: {results[0]}")
             
-            # Get document texts with safety checks
-            # results and scores are numpy arrays of shape (n_queries, k)
+            # 获取文档正文，并检查下标有效性
+            # results 和 scores 是形状为 (n_queries, k) 的 NumPy 数组
             retrieved_docs = []
             try:
-                # results[0] gives the indices for the first (and only) query
+                # results[0] 给出第一个（也是唯一一个）查询的文档下标
                 for i in range(len(results[0])):
                     idx = int(results[0][i])
                     score = float(scores[0][i])
@@ -427,7 +427,7 @@ class BM25Retriever:
 
 
 class RAGGenerator:
-    """LLM-based generator with RAG support using vLLM."""
+    """使用 vLLM、支持 RAG 的大语言模型生成器。"""
     
     def __init__(self, model_name: str, device: str = None, tensor_parallel_size: int = 1):
         self.model_name = model_name
@@ -437,27 +437,27 @@ class RAGGenerator:
         self.tokenizer = None
         self.latency = LatencyTracker()
         
-        # Sentence-ending tokens for fix-sentence mode
+        # 逐句检索模式使用的句末标记
         self.sentence_end_chars = {'.', '!', '?', '\n'}
     
     def initialize(self):
-        """Load the model using vLLM."""
+        """使用 vLLM 加载模型。"""
         logger.info(f"Loading model with vLLM: {self.model_name}")
         logger.info(f"Device: {self.device}, Tensor Parallel Size: {self.tensor_parallel_size}")
         self.latency.start("model_loading")
         
         try:
-            # Load tokenizer for chat template support
+            # 加载分词器，以支持对话模板
             self.tokenizer = AutoTokenizer.from_pretrained(
                 self.model_name,
                 trust_remote_code=True
             )
             
-            # Set pad token if not set
+            # 如果尚未设置填充 token，则进行设置
             if self.tokenizer.pad_token is None:
                 self.tokenizer.pad_token = self.tokenizer.eos_token
             
-            # Initialize vLLM engine
+            # 初始化 vLLM 引擎
             self.llm = LLM(
                 model=self.model_name,
                 tensor_parallel_size=self.tensor_parallel_size,
@@ -475,20 +475,20 @@ class RAGGenerator:
             raise
     
     def _has_chat_template(self) -> bool:
-        """Check if the tokenizer has a chat template."""
+        """检查分词器是否具有对话模板。"""
         if self.tokenizer is None:
             return False
-        # Check if chat_template attribute exists and is not None/empty
+        # 检查 chat_template 属性是否存在、是否不为 None 且非空
         return (hasattr(self.tokenizer, 'chat_template') and 
                 self.tokenizer.chat_template is not None and
                 len(self.tokenizer.chat_template) > 0)
     
     def _build_context_string(self, documents: List[Tuple[str, float]], 
                                context_prefix: str = "") -> str:
-        """Build context string from retrieved documents."""
+        """根据检索到的文档构造上下文字符串。"""
         context_parts = []
         for i, (doc, score) in enumerate(documents, 1):
-            # Truncate long documents
+            # 截断过长的文档
             doc_text = doc[:1000] if len(doc) > 1000 else doc
             context_parts.append(f"[Document {i}] {doc_text}")
         
@@ -497,10 +497,10 @@ class RAGGenerator:
     
     def _build_rag_prompt(self, query: str, documents: List[Tuple[str, float]], 
                           context_prefix: str = "") -> str:
-        """Build a RAG prompt with retrieved documents, using chat template if available."""
+        """使用检索到的文档构造 RAG 提示词；如果有对话模板，则使用该模板。"""
         context = self._build_context_string(documents, context_prefix)
         
-        # Build the user message content
+        # 构造用户消息内容
         user_content = f"""Based on the following context, answer the question.
 
 Context:
@@ -508,7 +508,7 @@ Context:
 
 Question: {query}"""
 
-        # Check if model has a chat template
+        # 检查模型是否具有对话模板
         if self._has_chat_template():
             logger.info("Using model's chat template for prompt formatting")
             messages = [
@@ -525,7 +525,7 @@ Question: {query}"""
             except Exception as e:
                 logger.warning(f"Failed to apply chat template: {e}. Using default format.")
         
-        # Fallback to default format (no chat template)
+        # 回退到默认格式（不使用对话模板）
         logger.info("Using default prompt format (no chat template available)")
         prompt = f"""{user_content}
 
@@ -535,8 +535,8 @@ Answer:"""
     
     def _build_continuation_prompt(self, original_prompt: str, generated_text: str,
                                     new_docs: List[Tuple[str, float]]) -> str:
-        """Build a continuation prompt for fix-sentence RAG with new retrieved documents."""
-        # Build context insert from new documents
+        """使用新检索到的文档，为逐句检索 RAG 构造续写提示词。"""
+        # 根据新文档构造要插入的上下文
         context_parts = []
         for i, (doc, score) in enumerate(new_docs, 1):
             doc_text = doc[:500] if len(doc) > 500 else doc
@@ -544,16 +544,16 @@ Answer:"""
         
         context_insert = "\n\n[Additional Context from Retrieval]\n" + "\n".join(context_parts) + "\n\n[Continue Answer]\n"
         
-        # For chat template models, we need to handle this differently
+        # 对于使用对话模板的模型，需要采用不同的处理方式
         if self._has_chat_template():
-            # Append the generated text and new context, then continue
+            # 追加已生成文本和新上下文，然后继续生成
             return original_prompt + generated_text + context_insert
         else:
             return original_prompt + generated_text + context_insert
     
     def generate_simple(self, query: str, documents: List[Tuple[str, float]], 
                         max_new_tokens: int = 256) -> str:
-        """Generate a response using simple RAG with vLLM."""
+        """使用 vLLM，通过简单 RAG 模式生成回答。"""
         if self.llm is None:
             raise RuntimeError("Generator not initialized. Call initialize() first.")
         
@@ -561,11 +561,11 @@ Answer:"""
         
         logger.info("Generating response (simple RAG) with vLLM...")
         
-        # Count input tokens for logging
+        # 统计输入 token 数，用于日志记录
         input_tokens = self.tokenizer(prompt, return_tensors="pt", truncation=True, max_length=16384)
         logger.info(f"device: {self.device}, input tokens: {input_tokens['input_ids'].shape[1]}")
         
-        # Set up sampling parameters
+        # 设置采样参数
         sampling_params = SamplingParams(
             max_tokens=max_new_tokens,
             temperature=0.7,
@@ -574,12 +574,12 @@ Answer:"""
         
         self.latency.start("generation")
         
-        # Generate with vLLM
+        # 使用 vLLM 生成文本
         outputs = self.llm.generate([prompt], sampling_params)
         
         elapsed = self.latency.stop("generation")
         
-        # Extract the generated text
+        # 提取生成的文本
         response = outputs[0].outputs[0].text
         num_tokens = len(outputs[0].outputs[0].token_ids)
     
@@ -592,14 +592,14 @@ Answer:"""
                               initial_docs: List[Tuple[str, float]],
                               max_new_tokens: int = 256,
                               retrieval_k: int = 3) -> str:
-        """Generate response with fix-sentence RAG (retrieval after each sentence) using vLLM."""
+        """使用 vLLM，通过逐句检索 RAG 模式（每生成一句后再次检索）生成回答。"""
         if self.llm is None:
             raise RuntimeError("Generator not initialized. Call initialize() first.")
         
         logger.info("Generating response (fix-sentence RAG) with vLLM...")
         logger.info(f"Retrieval k for subsequent sentences: {retrieval_k}")
         
-        # Initial prompt with retrieved documents
+        # 使用检索到的文档构造初始提示词
         current_docs = initial_docs
         generated_text = ""
         current_sentence = ""
@@ -608,11 +608,11 @@ Answer:"""
         
         self.latency.start("generation_total")
         
-        # Build initial prompt
+        # 构造初始提示词
         prompt = self._build_rag_prompt(query, current_docs)
         current_prompt = prompt
         
-        # Sampling params for single token generation
+        # 每次生成一个 token 的采样参数
         single_token_params = SamplingParams(
             max_tokens=1,
             temperature=0.7,
@@ -622,12 +622,12 @@ Answer:"""
         while total_tokens_generated < max_new_tokens:
             self.latency.start("token_generation")
             
-            # Generate one token at a time for sentence detection
+            # 每次生成一个 token，以检测句子边界
             outputs = self.llm.generate([current_prompt + generated_text], single_token_params)
             
             self.latency.stop("token_generation")
             
-            # Get the generated token
+            # 获取生成的 token
             if not outputs[0].outputs[0].token_ids:
                 logger.info("No token generated, stopping")
                 break
@@ -635,7 +635,7 @@ Answer:"""
             new_token_id = outputs[0].outputs[0].token_ids[0]
             new_token = outputs[0].outputs[0].text
             
-            # Check for EOS
+            # 检查是否遇到序列结束标记（EOS）
             if new_token_id == self.tokenizer.eos_token_id:
                 logger.info("EOS token generated, stopping")
                 break
@@ -644,7 +644,7 @@ Answer:"""
             generated_text += new_token
             total_tokens_generated += 1
             
-            # Check for sentence end
+            # 检查是否到达句末
             if any(char in new_token for char in self.sentence_end_chars):
                 sentence_count += 1
                 sentence_text = current_sentence.strip()
@@ -652,14 +652,14 @@ Answer:"""
                 if sentence_text:
                     logger.info(f"Sentence {sentence_count} completed: '{sentence_text[:100]}...'")
                     
-                    # Retrieve new documents using the generated sentence
+                    # 使用已生成的句子检索新文档
                     logger.info(f"Retrieving documents for sentence {sentence_count}")
                     new_docs = retriever.retrieve(sentence_text, k=retrieval_k)
                     
                     if new_docs:
-                        # Build continuation prompt with new context
+                        # 使用新上下文构造续写提示词
                         current_prompt = self._build_continuation_prompt(prompt, generated_text, new_docs)
-                        # Reset generated_text since it's now part of current_prompt
+                        # 清空 generated_text，因为它已包含在 current_prompt 中
                         generated_text = ""
                         
                         logger.info(f"Appended {len(new_docs)} new documents to context")
@@ -674,7 +674,7 @@ Answer:"""
 
 
 class RAGPipeline:
-    """Main RAG pipeline combining retriever and generator."""
+    """组合检索器和生成器的 RAG 主流水线。"""
     
     def __init__(self, corpus_name: str, model_name: str, 
                  initial_k: int = 64, sentence_k: int = 3,
@@ -688,7 +688,7 @@ class RAGPipeline:
         self.latency = LatencyTracker()
     
     def initialize(self):
-        """Initialize both retriever and generator."""
+        """初始化检索器和生成器。"""
         logger.info("=" * 60)
         logger.info("INITIALIZING RAG PIPELINE")
         logger.info("=" * 60)
@@ -707,17 +707,17 @@ class RAGPipeline:
     
     def query(self, question: str, mode: str = "simple", 
               max_new_tokens: int = 256) -> str:
-        """Process a query and generate a response."""
+        """处理查询并生成回答。"""
         logger.info("=" * 60)
         logger.info(f"PROCESSING QUERY (mode: {mode})")
         logger.info(f"Question: {question}")
         logger.info("=" * 60)
         
-        # Retrieve documents
+        # 检索文档
         documents, kernel_time = self.retriever.retrieve(question, k=self.initial_k)
         
         self.latency.start("total_query")
-        # Generate response based on mode
+        # 根据模式生成回答
         if mode == "simple":
             response = self.generator.generate_simple(question, documents, max_new_tokens)
         elif mode == "fix-sentence":
@@ -750,7 +750,7 @@ class RAGPipeline:
 
     
     def print_metrics(self):
-        """Print all latency metrics."""
+        """打印所有延迟指标。"""
         logger.info("\n" + "=" * 60)
         logger.info("COMBINED METRICS")
         logger.info("=" * 60)
@@ -765,7 +765,7 @@ class RAGPipeline:
 
 
 def parse_args():
-    """Parse command line arguments."""
+    """解析命令行参数。"""
     parser = argparse.ArgumentParser(
         description="RAG Pipeline with BM25S and HuggingFace",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter
@@ -849,7 +849,7 @@ def fpga_retriever_setup(
     export_dir: str = "./export",
 ):
     
-    # Load document frequency
+    # 加载文档频率（包含各词项的文档数量）
     logger.info("Loading doc_freq.bin...")
     doc_freq = load_document_frequency_mmap(os.path.join(export_dir, "doc_freq.bin"))
     
@@ -857,7 +857,7 @@ def fpga_retriever_setup(
         logger.error("Failed to load doc_freq.bin")
         return None
     
-    # Load term frequencies
+    # 加载词频
     logger.info("Loading term_freq.bin...")
     term_freq = load_term_frequencies_mmap(os.path.join(export_dir, "term_freq.bin"))
 
@@ -865,12 +865,12 @@ def fpga_retriever_setup(
         logger.error("Failed to load term_freq.bin")
         return None
     
-    # Pack documents for hardware
+    # 将文档打包成硬件所需的格式
     packed = pack_documents_for_hw(term_freq, 8)
     
-    # Compute L and L_doc_total
+    # 计算 L 和 L_doc_total
     L = packed.num_docs
-    L = ((L + 63) // 64) * 64  # Round up to multiple of 64
+    L = ((L + 63) // 64) * 64  # 向上补齐到 64 的倍数
     L_doc_total = packed.vectors_per_channel()
     
     logger.info("\n======================================")
@@ -881,7 +881,7 @@ def fpga_retriever_setup(
     logger.info(f"Num super-batches: {packed.num_super_batches}")
     
     # ===============================
-    # PyXRT Device and Kernel Initialization
+    # 初始化 PyXRT 设备和内核
     # ===============================
     
     logger.info("\n======================================")
@@ -900,7 +900,7 @@ def fpga_retriever_setup(
     device, xclbin_uuid, selected_device = result
     logger.info(f"Device {selected_device} opened and XCLBIN loaded")
     
-    # Create kernel object
+    # 创建内核对象
     logger.info("Creating kernel object...")
     try:
         kernel = pyxrt.kernel(device, xclbin_uuid, "indexer_top")
@@ -910,18 +910,18 @@ def fpga_retriever_setup(
     logger.info(f"Kernel created.")
     
     # ===============================
-    # Buffer Allocation
+    # 分配缓冲区
     # ===============================
     
     logger.info("\n======================================")
     logger.info("BUFFER ALLOCATION")
     logger.info("======================================")
     
-    # Calculate buffer sizes
-    df_buffer_size = VOCAB_SIZE_DIV_16 * 16 * 4  # 16 ints per vector
-    query_bitmap_size = VOCAB_SIZE_DIV_512 * 64  # 512 bits = 64 bytes per chunk
+    # 计算缓冲区大小
+    df_buffer_size = VOCAB_SIZE_DIV_16 * 16 * 4  # 每个向量包含 16 个 int
+    query_bitmap_size = VOCAB_SIZE_DIV_512 * 64  # 每块 512 位，即 64 字节
     inst_mem_size = packed.num_super_batches * 4
-    doc_mem_size = L_doc_total * 16 * 4  # 16 uint32 per vector
+    doc_mem_size = L_doc_total * 16 * 4  # 每个向量包含 16 个 uint32
     output_size = (TOP_K + 15) // 16
     topk_id_size = output_size * 16 * 4
     
@@ -932,11 +932,11 @@ def fpga_retriever_setup(
     logger.info(f"  doc_mem (per channel): {doc_mem_size / 1024 / 1024:.2f} MB")
     logger.info(f"  topk_id: {topk_id_size} bytes")
     
-    # Allocate buffers using kernel.group_id() to get memory bank assignment
-    # Argument order: L(0), L_doc_total(1), df_buffer(2), query_bitmap(3), inst_mem(4), 
+    # 使用 kernel.group_id() 获取内存组分配信息并分配缓冲区
+    # 参数顺序：L(0)、L_doc_total(1)、df_buffer(2)、query_bitmap(3)、inst_mem(4)、
     #                 doc_mem[0-3](5-8), topk_id(9)
     
-    # Initialize with zeros like the Xilinx example
+    # 与 Xilinx 示例一样，使用零初始化
     zeros_df = bytearray(df_buffer_size)
     zeros_query = bytearray(query_bitmap_size)
     zeros_inst = bytearray(inst_mem_size)
@@ -945,22 +945,22 @@ def fpga_retriever_setup(
     
     logger.info("Allocate and initialize buffers")
     
-    # Allocate df_buffer
+    # 分配 df_buffer 缓冲区
     bo_df_buffer = pyxrt.bo(device, df_buffer_size, pyxrt.bo.normal, kernel.group_id(2))
     bo_df_buffer.write(zeros_df, 0)
     buf_df = bo_df_buffer.map()
     
-    # Allocate query_bitmap
+    # 分配 query_bitmap 缓冲区
     bo_query_bitmap = pyxrt.bo(device, query_bitmap_size, pyxrt.bo.normal, kernel.group_id(3))
     bo_query_bitmap.write(zeros_query, 0)
     buf_query = bo_query_bitmap.map()
     
-    # Allocate inst_mem
+    # 分配 inst_mem 缓冲区
     bo_inst_mem = pyxrt.bo(device, inst_mem_size, pyxrt.bo.normal, kernel.group_id(4))
     bo_inst_mem.write(zeros_inst, 0)
     buf_inst = bo_inst_mem.map()
     
-    # Allocate doc_mem channels
+    # 分配各路 doc_mem 缓冲区
     bo_doc_mem_0 = pyxrt.bo(device, doc_mem_size, pyxrt.bo.normal, kernel.group_id(5))
     bo_doc_mem_0.write(zeros_doc, 0)
     buf_doc_0 = bo_doc_mem_0.map()
@@ -977,7 +977,7 @@ def fpga_retriever_setup(
     bo_doc_mem_3.write(zeros_doc, 0)
     buf_doc_3 = bo_doc_mem_3.map()
     
-    # Allocate topk_id output buffer
+    # 分配 topk_id 输出缓冲区
     bo_topk_id = pyxrt.bo(device, topk_id_size, pyxrt.bo.normal, kernel.group_id(9))
     bo_topk_id.write(zeros_topk, 0)
     buf_topk = bo_topk_id.map()
@@ -985,28 +985,28 @@ def fpga_retriever_setup(
     logger.info(f"Buffers allocated")
     
     # ===============================
-    # Prepare Data and Write to Buffers
+    # 准备数据并写入缓冲区
     # ===============================
     
     logger.info("\n======================================")
     logger.info("DATA PREPARATION AND TRANSFER")
     logger.info("======================================")
     
-    # Prepare and write df_buffer data
+    # 准备并写入 df_buffer 数据
     logger.info("Writing df_buffer data...")
     df_buffer_data = np.zeros(VOCAB_SIZE_DIV_16 * 16, dtype=np.int32)
     for i in range(VOCAB_SIZE_DIV_16):
         for j in range(16):
             df_buffer_data[i * 16 + j] = int(doc_freq[i * 16 + j])
-    # Write using bo.write() method
+    # 使用 bo.write() 方法写入
     bo_df_buffer.write(df_buffer_data.tobytes(), 0)
     
-    # Prepare and write inst_mem
+    # 准备并写入 inst_mem
     logger.info("Writing inst_mem data...")
     inst_mem_data = np.array(packed.inst_mem, dtype=np.int32)
     bo_inst_mem.write(inst_mem_data.tobytes(), 0)
     
-    # Prepare and write doc_mem for each channel
+    # 准备并写入每个通道的 doc_mem
     logger.info("Writing doc_mem data for 4 channels...")
     doc_mem_buffers = [buf_doc_0, buf_doc_1, buf_doc_2, buf_doc_3]
     doc_mem_bos = [bo_doc_mem_0, bo_doc_mem_1, bo_doc_mem_2, bo_doc_mem_3]
@@ -1018,14 +1018,14 @@ def fpga_retriever_setup(
                 channel_data[vec_idx * 16 + j] = vec[j]
         doc_mem_bos[channel].write(channel_data.tobytes(), 0)
     
-    # Initialize output buffer to -1
+    # 将输出缓冲区初始化为 -1
     logger.info("Initializing topk_id output buffer...")
     topk_id_data = np.full(output_size * 16, -1, dtype=np.int32)
     bo_topk_id.write(topk_id_data.tobytes(), 0)
     
     logger.info(f"  output_size: {output_size}, topk_id_size: {topk_id_size} bytes")
     
-    # Sync buffers to device
+    # 将缓冲区同步到设备
     logger.info("Syncing buffers to device...")
     
     bo_df_buffer.sync(pyxrt.xclBOSyncDirection.XCL_BO_SYNC_BO_TO_DEVICE, df_buffer_size, 0)
@@ -1041,11 +1041,11 @@ def fpga_retriver_launch(
     kernel, L, L_doc_total, bo_query_bitmap, bo_df_buffer, bo_inst_mem, bo_doc_mem_0, bo_doc_mem_1, bo_doc_mem_2, bo_doc_mem_3, bo_topk_id, buf_topk, query_token_list
 ):
     query_tokens = parse_query_tokens(query_token_list)
-    query_bitmap_size = VOCAB_SIZE_DIV_512 * 64  # 512 bits = 64 bytes per chunk
+    query_bitmap_size = VOCAB_SIZE_DIV_512 * 64  # 每块 512 位，即 64 字节
     output_size = (64 + 15) // 16
     topk_id_size = output_size * 16 * 4
     logger.info(f"\nParsed {len(query_tokens)} query tokens from input")
-    # Prepare query bitmap
+    # 准备查询位图
     logger.info("Preparing query bitmap...")
     query_bitmap = np.zeros(VOCAB_SIZE_DIV_512 * 64, dtype=np.uint8)
     for token_id in query_tokens:
@@ -1057,13 +1057,13 @@ def fpga_retriver_launch(
             bit_in_byte = bit_idx % 8
             query_bitmap[chunk_idx * 64 + byte_idx] |= (1 << bit_in_byte)
     
-    # Write query bitmap to buffer
+    # 将查询位图写入缓冲区
     bo_query_bitmap.write(query_bitmap.tobytes(), 0)
     
-    # Sync query bitmap to device
+    # 将查询位图同步到设备
     bo_query_bitmap.sync(pyxrt.xclBOSyncDirection.XCL_BO_SYNC_BO_TO_DEVICE, query_bitmap_size, 0)
     
-    # Launch kernel
+    # 启动内核
     logger.info("Launching kernel...")
     start_time = time.time()
     
@@ -1083,7 +1083,7 @@ def fpga_retriver_launch(
     logger.info("Now wait for the kernel to finish")
     state = run.wait()
     
-    kernel_time = (time.time() - start_time) * 1000  # in ms
+    kernel_time = (time.time() - start_time) * 1000  # 单位为毫秒
     logger.info(f"Kernel execution completed in {kernel_time:.2f} ms")
     logger.info(f"  Kernel state: {state}")
 
@@ -1091,10 +1091,10 @@ def fpga_retriver_launch(
         logger.warning(f" Kernel did not complete successfully! State: {state}")
     
     
-    # Sync output buffer from device
+    # 将输出缓冲区从设备同步回主机
     bo_topk_id.sync(pyxrt.xclBOSyncDirection.XCL_BO_SYNC_BO_FROM_DEVICE, topk_id_size, 0)
     
-    # Read top-k document IDs
+    # 读取 Top-K 文档 ID
     hw_topk_indices = []
     topk_bytes = bytes(buf_topk[:topk_id_size])
     topk_result = np.frombuffer(topk_bytes, dtype=np.int32)
@@ -1107,7 +1107,7 @@ def fpga_retriver_launch(
     return hw_topk_indices, kernel_time
     
 def main():
-    """Main entry point."""
+    """程序主入口。"""
     args = parse_args()
     
     logger.info("=" * 60)
@@ -1123,7 +1123,7 @@ def main():
     logger.info(f"Cache dir: {args.cache_dir}")
     logger.info("=" * 60)
     
-    # Initialize pipeline
+    # 初始化流水线
     pipeline = RAGPipeline(
         corpus_name=args.corpus,
         model_name=args.model,
@@ -1139,7 +1139,7 @@ def main():
     #pipeline.gen_warmup()
     
     if args.question:
-        # Single question mode
+        # 单次问答模式
         response = pipeline.query(args.question, mode=args.mode, 
                                   max_new_tokens=args.max_tokens)
         
@@ -1150,7 +1150,7 @@ def main():
         
         pipeline.print_metrics()
     else:
-        # Interactive mode
+        # 交互模式
         print("\nEntering interactive mode. Type 'quit' or 'exit' to stop.")
         print("Type 'metrics' to show latency metrics.")
         print("Type 'warmup' to run generation warmup.")
@@ -1194,7 +1194,7 @@ def main():
                     print(f"Device changed to: {new_device}")
                     continue
 
-                # Process the question
+                # 处理用户问题
                 response = pipeline.query(user_input, mode=current_mode,
                                           max_new_tokens=args.max_tokens)
                 
@@ -1211,7 +1211,7 @@ def main():
                 logger.error(f"Error processing query: {e}")
                 continue
         
-        # Print final metrics
+        # 打印最终统计指标
         pipeline.print_metrics()
 
 

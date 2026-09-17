@@ -1,10 +1,10 @@
 /**
  * @file build_memory.h
- * @brief BuildMemory step - converts RawData to Memory
+ * @brief BuildMemory 步骤：将原始数据 RawData 转换为记忆结构 Memory
  * 
- * This step handles the construction of memory structures from raw input data.
- * Examples include building vector indices, creating hash tables, or
- * quantizing embeddings.
+ * 本步骤负责根据原始输入数据构建记忆结构。
+ * 例如构建向量索引、创建哈希表，或
+ * 对嵌入向量进行量化。
  */
 
 #ifndef HETEROMM_DEV_STEPS_BUILD_MEMORY_H_
@@ -25,18 +25,18 @@ namespace heteromm {
 namespace step {
 
 /**
- * @brief Abstract base class for the BuildMemory step
+ * @brief BuildMemory 步骤的抽象基类
  * 
- * Data flow: RawData -> BuildMemory -> Memory
+ * 数据流： RawData -> BuildMemory -> Memory
  * 
- * This step processes raw input data and constructs an indexed
- * memory structure suitable for efficient retrieval operations.
+ * 本步骤处理原始输入数据，构建带索引的
+ * 记忆结构，以便高效检索。
  * 
- * Usage:
+ * 用法示例：
  * @code
  *   class MyIndexBuilder : public BuildMemoryStep<MyRawData, MyIndex> {
  *       StepStatus run_cpu_kernel(const MyRawData& raw, MyIndex& memory) override {
- *           // Build index on CPU/GPU
+ *           // 在 CPU/GPU 上构建索引
  *       }
  *   };
  * @endcode
@@ -54,7 +54,7 @@ public:
 
     int execute(
         const RetDataType& raw_data,
-        MemoryType& memory, // for testing, pass the ground truth
+        MemoryType& memory, // 进行功能测试时，在此传入预期的正确结果
         bool run_functional_test = false,
         bool verbose = false
     ) {
@@ -80,7 +80,7 @@ public:
             return 0;
         }
 
-        // consider static schedule first
+        // 先按照静态调度配置选择执行分支
         switch (current_kernel_) {
             case KernelType::CPU:
                 if(verbose) {
@@ -112,7 +112,7 @@ public:
             default:
                 break;
         }
-        // dynamic schedule: call backend
+        // 动态调度：调用后端
         return 0;
     }
 
@@ -182,18 +182,18 @@ private:
 };
 
 /**
- * @brief BM25 Dataset Builder - builds BM25 index memory from text corpus
+ * @brief BM25 数据集构建器：根据文本语料构建 BM25 索引记忆
  * 
- * This step loads the corpus, tokenizes it, builds a BM25 index,
- * and prepares FPGA buffers for the fused retrieval step.
+ * 本步骤加载语料、进行分词、构建 BM25 索引，
+ * 并为融合检索步骤准备 FPGA 缓冲区。
  * 
- * The CPU kernel delegates to Python functions:
- * - bm25_loader_xrt.load_document_frequency_mmap: loads document frequencies
- * - bm25_loader_xrt.load_term_frequencies_mmap: loads term frequencies
- * - bm25_loader_xrt.pack_documents_for_hw: packs documents for FPGA
- * - launch_bm25.fpga_retriever_setup: initializes FPGA device and buffers
+ * CPU 内核通过以下 Python 函数完成相关操作：
+ * - bm25_loader_xrt.load_document_frequency_mmap: 加载文档频率
+ * - bm25_loader_xrt.load_term_frequencies_mmap: 加载词频
+ * - bm25_loader_xrt.pack_documents_for_hw: 将文档打包为 FPGA 所需的格式
+ * - launch_bm25.fpga_retriever_setup: 初始化 FPGA 设备及缓冲区
  * 
- * Data flow: TextDBData -> BM25DatasetBuilder -> BM25IndexMemory
+ * 数据流： TextDBData -> BM25DatasetBuilder -> BM25IndexMemory
  */
 class BM25DatasetBuilder : public BuildMemory<data_type::TextDBData, data_type::BM25IndexMemory> {
 public:
@@ -210,8 +210,8 @@ public:
     ~BM25DatasetBuilder() override;
 
     /**
-     * @brief Get the stored FPGA setup Python object
-     * Used by the fused retrieval step to launch the FPGA kernel.
+     * @brief 获取已保存的 FPGA 初始化结果 Python 对象
+     * 融合检索步骤使用该对象启动 FPGA 内核。
      */
     void* get_fpga_setup_object() const { return fpga_setup_object_; }
 

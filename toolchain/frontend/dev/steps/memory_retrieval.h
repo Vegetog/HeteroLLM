@@ -1,9 +1,9 @@
 /**
  * @file memory_retrieval.h
- * @brief MemoryRetrieval step - selects top-k entries based on scores
+ * @brief MemoryRetrieval 步骤：根据分数选出前 k 个条目
  * 
- * This step handles selecting the most relevant memory entries
- * based on computed similarity scores.
+ * 本步骤负责根据已计算的相似度分数，
+ * 选出相关性最高的记忆条目。
  */
 
 #ifndef HETEROMM_DEV_STEPS_MEMORY_RETRIEVAL_H_
@@ -20,18 +20,18 @@ namespace heteromm {
 namespace step {
 
 /**
- * @brief Abstract base class for the MemoryRetrieval step
+ * @brief MemoryRetrieval 步骤的抽象基类
  * 
- * Data flow: Score -> MemoryRetrieval -> RetrievedIndex
+ * 数据流： Score -> MemoryRetrieval -> RetrievedIndex
  * 
- * This step takes the computed scores and selects the indices
- * of the top-k most relevant memory entries.
+ * 本步骤接收已计算的分数，选出相关性最高的
+ * k 个记忆条目的索引。
  * 
- * Usage:
+ * 用法示例：
  * @code
  *   class TopKRetrieval : public MemoryRetrieval<MyScore, MyIndices> {
  *       void run_cpu_kernel(const MyScore& s, MyIndices& idx) override {
- *           // Select top-k entries
+ *           // 选出前 k 个条目
  *       }
  *   };
  * @endcode
@@ -50,7 +50,7 @@ public:
 
     int execute(
         const ScoreType& score,
-        IndexType& index, // for testing, pass the ground truth
+        IndexType& index, // 进行功能测试时，在此传入预期的正确结果
         bool run_functional_test = false,
         bool verbose = false
     ) {
@@ -60,7 +60,7 @@ public:
                 std::clog << "  Score Type: " << score.type_name() << std::endl;
                 std::clog << "  Index Type: " << index.type_name() << std::endl;
             }
-            // deep copy index to check
+            // 深拷贝预期索引，供后续结果校验使用
             IndexType original_index = index;
 
             run_test_kernel(score, index);
@@ -82,7 +82,7 @@ public:
             return 0;
         }
 
-        // consider static schedule first
+        // 先按照静态调度配置选择执行分支
         switch (current_kernel_) {
             case KernelType::CPU:
                 if(verbose) {
@@ -152,9 +152,9 @@ private:
 };
 
 /**
- * @brief Top-K retrieval - selects the k entries with highest scores
+ * @brief Top-K 检索：选出分数最高的 k 个条目
  * 
- * Returns indices of the k highest scoring entries.
+ * 返回分数最高的 k 个条目的索引。
  */
 class TopKRetrieval : public MemoryRetrieval<
     data_type::VectorScore<float>,
@@ -193,9 +193,9 @@ private:
 };
 
 /**
- * @brief Threshold retrieval - selects entries with scores above a threshold
+ * @brief 阈值检索：选出分数超过阈值的条目
  * 
- * Returns a bitmap indicating which entries exceed the threshold.
+ * 返回位图，标记哪些条目的分数超过阈值。
  */
 class ThresholdRetrieval : public MemoryRetrieval<
     data_type::VectorScore<float>,

@@ -1,9 +1,9 @@
 /**
  * @file apply_memory.h
- * @brief ApplyMemory step - applies retrieved memory to produce output
+ * @brief ApplyMemory 步骤：应用检索到的记忆，生成输出
  * 
- * This step handles using the retrieved memory entries along with
- * input data to produce the final output.
+ * 本步骤将检索到的记忆条目与
+ * 输入数据结合，生成最终输出。
  */
 
 #ifndef HETEROMM_DEV_STEPS_APPLY_MEMORY_H_
@@ -25,19 +25,19 @@ namespace heteromm {
 namespace step {
 
 /**
- * @brief Abstract base class for the ApplyMemory step
+ * @brief ApplyMemory 步骤的抽象基类
  * 
- * Data flow: (RawData, RetrievedIndex, ArbitraryInput) -> ApplyMemory -> OutputData
+ * 数据流： (RawData, RetrievedIndex, ArbitraryInput) -> ApplyMemory -> OutputData
  * 
- * This step combines the original raw data with the retrieved memory indices
- * and optional additional input to produce the final output.
+ * 本步骤结合原始数据、检索得到的记忆索引
+ * 以及可选的额外输入，生成最终输出。
  * 
- * Usage:
+ * 用法示例：
  * @code
  *   class MemoryAugmentation : public ApplyMemoryStep<MyRaw, MyIdx, MyInput, MyOutput> {
  *       StepStatus run_cpu_kernel(const MyRaw& raw, const MyIdx& idx, 
  *                                  const MyInput& in, MyOutput& out) override {
- *           // Apply memory augmentation
+ *           // 应用记忆增强
  *       }
  *   };
  * @endcode
@@ -61,7 +61,7 @@ public:
         const RetDataType& retrieved_data,
         const IndexType& index,
         const InputType& input,
-        OutputType& output, // for testing, pass the ground truth
+        OutputType& output, // 进行功能测试时，在此传入预期的正确结果
         bool run_functional_test = false,
         bool verbose = false
     ) {
@@ -89,7 +89,7 @@ public:
             return 0;
         } 
 
-        // consider static schedule first
+        // 先按照静态调度配置选择执行分支
         switch (current_kernel_) { 
             case KernelType::CPU:
                 if(verbose) {
@@ -213,22 +213,22 @@ private:
 };
 
 /**
- * @brief RAG Apply Memory - concatenates retrieved documents with query
+ * @brief RAG 记忆应用：将检索到的文档与查询拼接
  * 
- * This step implements the "apply memory" phase of the RAG pipeline.
- * Given the retrieved top-K document indices and the text database,
- * it builds the augmented prompt by:
- * 1. Looking up document texts by index
- * 2. Building context string from documents
- * 3. Concatenating context with the original query
- * 4. Tokenizing the full RAG prompt
+ * 本步骤实现 RAG 流水线的“应用记忆”阶段。
+ * 根据检索得到的 Top-K 文档索引和文本数据库，
+ * 通过以下操作构建增强后的提示词：
+ * 1. 根据索引查找文档正文
+ * 2. 根据文档构建上下文字符串
+ * 3. 将上下文与原始查询拼接
+ * 4. 对完整的 RAG 提示词进行分词
  * 
- * In the rag_pipeline.py flow, this corresponds to:
- * - BM25Retriever.get_documents() to look up document texts
- * - RAGGenerator._build_context_string() to format context
- * - RAGGenerator._build_rag_prompt() to build the full prompt
+ * 在 rag_pipeline.py 流程中，这对应以下操作：
+ * - BM25Retriever.get_documents() 查找文档正文
+ * - RAGGenerator._build_context_string() 格式化上下文
+ * - RAGGenerator._build_rag_prompt() 构建完整提示词
  * 
- * Data flow: (TextDBData, TopKIndex, TextInputOutputData<int>) -> RAGApplyMemory -> TextInputOutputData<int>
+ * 数据流： (TextDBData, TopKIndex, TextInputOutputData<int>) -> RAGApplyMemory -> TextInputOutputData<int>
  */
 class RAGApplyMemory : public ApplyMemory<
     data_type::TextDBData,

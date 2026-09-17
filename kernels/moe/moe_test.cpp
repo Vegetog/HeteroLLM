@@ -21,8 +21,8 @@ DEFINE_int32 (seed, 12345, "RNG seed");
 static inline float ref_sigmoidf(float x) { return 1.0f / (1.0f + std::exp(-x)); }
 static inline float ref_siluf(float x)    { return x * ref_sigmoidf(x); }
 
-// Reference model — mirrors the kernel now that gate projection is INT16.
-// x and W_gate are provided already-quantized (INT16) with global scales.
+// 参考模型：与当前采用 INT16 门控投影的内核实现对应。
+// 输入 x 和 W_gate 均已量化为 INT16，并分别配有全局缩放系数。
 static void reference_moe(
     int N, int local_expert_base,
     const std::vector<int16_t>& x_int16,
@@ -41,7 +41,7 @@ static void reference_moe(
     y_out.assign(N * HIDDEN, 0.0f);
 
     for (int t = 0; t < N; t++) {
-        // INT16 gate scoring matches the kernel exactly.
+        // INT16 门控评分与内核中的计算完全一致。
         std::vector<float> scores(N_EXPERTS_TOTAL);
         for (int e = 0; e < N_EXPERTS_TOTAL; e++) {
             int64_t acc = 0;
@@ -88,7 +88,7 @@ static void reference_moe(
         std::vector<float> top_w   = (local_expert_base == 0) ? top_lo_w   : top_hi_w;
         for (int i = 0; i < LOCAL_K; i++) top_w[i] *= scale_w;
 
-        // x for expert FFN is the same INT16 buffer — no per-token requant.
+        // 专家 FFN 的输入 x 复用同一份 INT16 缓冲区，无需逐 token 重新量化。
         const int16_t* xq = &x_int16[t * HIDDEN];
 
         for (int i = 0; i < LOCAL_K; i++) {
@@ -148,7 +148,7 @@ int main(int argc, char** argv) {
 
     std::vector<float> bias_ref(N_EXPERTS_TOTAL);
     for (auto& v : bias_ref) v = bdist(gen);
-    // Bias experts 0,1,2,3 to always be top-4 from lower half
+    // 增大专家 0、1、2、3 的偏置，使其始终成为低编号半区的前 4 个专家。
     bias_ref[0]=10.0f; bias_ref[1]=9.0f; bias_ref[2]=8.0f; bias_ref[3]=7.0f;
 
     constexpr int N_TEST_EXPERTS = LOCAL_K;
@@ -160,7 +160,7 @@ int main(int argc, char** argv) {
     }
 
     // ------------------------------------------------------------------------
-    // Symmetric zero-centered quantization for x (global scale over all tokens)
+    // 对 x 进行以零为中心的对称量化（所有 token 共用一个全局缩放系数）。
     // ------------------------------------------------------------------------
     float x_max_abs = 0.0f;
     for (auto v : x_ref) { float a = std::fabs(v); if (a > x_max_abs) x_max_abs = a; }
@@ -176,7 +176,7 @@ int main(int argc, char** argv) {
     }
 
     // ------------------------------------------------------------------------
-    // Symmetric zero-centered quantization for W_gate (global scale)
+    // 对 W_gate 进行以零为中心的对称量化（使用全局缩放系数）。
     // ------------------------------------------------------------------------
     float wg_max_abs = 0.0f;
     for (auto v : w_gate_ref) { float a = std::fabs(v); if (a > wg_max_abs) wg_max_abs = a; }
@@ -192,7 +192,7 @@ int main(int argc, char** argv) {
         W_gate_int16[i] = (int16_t)q;
     }
 
-    // x_mem: N * HIDDEN_VECS int16_vec_t
+    // x_mem：包含 N * HIDDEN_VECS 个 int16_vec_t 向量。
     aligned_vector<int16_vec_t> x_mem(N * HIDDEN_VECS);
     for (int t = 0; t < N; t++)
         for (int v = 0; v < HIDDEN_VECS; v++) {
@@ -202,7 +202,7 @@ int main(int argc, char** argv) {
             x_mem[t*HIDDEN_VECS + v] = vec;
         }
 
-    // w_gate_mem: N_EXPERTS_TOTAL * HIDDEN_VECS int16_vec_t
+    // w_gate_mem：包含 N_EXPERTS_TOTAL * HIDDEN_VECS 个 int16_vec_t 向量。
     aligned_vector<int16_vec_t> w_gate_mem(N_EXPERTS_TOTAL * HIDDEN_VECS);
     for (int e = 0; e < N_EXPERTS_TOTAL; e++)
         for (int v = 0; v < HIDDEN_VECS; v++) {
@@ -212,13 +212,13 @@ int main(int argc, char** argv) {
             w_gate_mem[e*HIDDEN_VECS + v] = vec;
         }
 
-    // Combined bias + dequant buffer on a single port:
+    // 将偏置和反量化参数合并到同一个端口的缓冲区中：
     //   [ bias[0..N_EXPERTS_TOTAL-1] | dequant[0..DEQUANT_PARAMS_PER_SLOT-1] ]
     aligned_vector<float> bias_dequant_mem(N_EXPERTS_TOTAL + DEQUANT_PARAMS_PER_SLOT);
     for (int e=0; e<N_EXPERTS_TOTAL; e++) bias_dequant_mem[e]=bias_ref[e];
 
-    // Opt 3: split each weight matrix into even-row (a) and odd-row (b) sub-matrices.
-    // Layout: expert e, half-row rh → row 2*rh (even) and 2*rh+1 (odd).
+    // 优化 3：将每个权重矩阵拆成偶数行子矩阵（a）和奇数行子矩阵（b）。
+    // 布局：对于专家 e，子矩阵行号 rh 分别对应原矩阵的第 2*rh 行（偶数行）和第 2*rh+1 行（奇数行）。
     aligned_vector<int16_vec_t> W1a_mem_src((size_t)N_TEST_EXPERTS * W1_HALF_VECS);
     aligned_vector<int16_vec_t> W1b_mem_src((size_t)N_TEST_EXPERTS * W1_HALF_VECS);
     aligned_vector<int16_vec_t> W3a_mem_src((size_t)N_TEST_EXPERTS * W3_HALF_VECS);

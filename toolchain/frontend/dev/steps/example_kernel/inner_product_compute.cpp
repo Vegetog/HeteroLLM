@@ -1,6 +1,6 @@
 /**
  * @file inner_product_compute.cpp
- * @brief Implementation of InnerProductCompute kernels
+ * @brief InnerProductCompute 各类计算内核的实现
  */
 
 #include "../compute_score.h"
@@ -35,7 +35,7 @@ void InnerProductCompute::run_cpu_kernel(
     const data_type::VectorQuery<float>& query,
     data_type::VectorScore<float>& score
 ) {
-    // TODO: Implement CPU kernel
+    // TODO：实现 CPU 内核；当前复用参考实现。
     run_test_kernel(memory, query, score);
     return;
 }
@@ -45,7 +45,7 @@ void InnerProductCompute::run_gpu_kernel(
     const data_type::VectorQuery<float>& query,
     data_type::VectorScore<float>& score
 ) {
-    // TODO: Implement GPU kernel
+    // TODO：实现 GPU 内核。
     std::clog << "[InnerProductCompute] GPU kernel not implemented. exiting." << std::endl;
     return;
 }
@@ -55,7 +55,7 @@ void InnerProductCompute::run_fpga_kernel(
     const data_type::VectorQuery<float>& query,
     data_type::VectorScore<float>& score
 ) {
-    // TODO: Implement FPGA kernel
+    // TODO：实现 FPGA 内核。
     std::clog << "[InnerProductCompute] FPGA kernel not implemented. exiting." << std::endl;
     return;
 }

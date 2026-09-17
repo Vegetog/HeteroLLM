@@ -1,17 +1,17 @@
 /**
- * GPU → FPGA P2P Transfer Demo
+ * GPU → FPGA P2P 传输示例
  *
- * Demonstrates the reverse P2P direction: GPU writes data into an
- * FPGA-resident buffer that is accessible to both devices.
+ * 演示反向 P2P 传输：GPU 将数据写入位于 FPGA 上、
+ * 可由两个设备共同访问的缓冲区。
  *
- * Flow:
- *   1. FPGA allocates a P2P buffer in HBM
- *   2. Buffer is mapped to host via xrt::bo::map()
- *   3. Mapped pointer is registered with GPU via hipHostRegister()
- *   4. GPU kernel writes data through the P2P device pointer
- *   5. FPGA reads the data (host-mapped pointer or FPGA kernel)
+ * 流程：
+ *   1. FPGA 在 HBM 中分配 P2P 缓冲区
+ *   2. 通过 xrt::bo::map() 将缓冲区映射到主机地址空间
+ *   3. 通过 hipHostRegister() 向 GPU 注册映射后的指针
+ *   4. GPU 内核通过 P2P 设备指针写入数据
+ *   5. 读取 FPGA 缓冲区中的数据（通过主机映射指针或 FPGA 内核）
  *
- * Build:
+ * 编译：
  *   hipcc -c gpu_write_kernels.hip -o gpu_write_kernels.o
  *   hipcc gpu_to_fpga_demo.cpp gpu_write_kernels.o \
  *         -I/opt/xilinx/xrt/include -L/opt/xilinx/xrt/lib -lxrt_coreutil \
@@ -29,12 +29,12 @@
 #include <random>
 #include <set>
 
-// XRT includes
+// XRT 头文件
 #include <xrt/xrt_device.h>
 #include <xrt/xrt_kernel.h>
 #include <xrt/xrt_bo.h>
 
-// HIP includes
+// HIP 头文件
 #include <hip/hip_runtime.h>
 
 #define HIP_CHECK(cmd) \
@@ -48,7 +48,7 @@
     } while (0)
 
 // ============================================================================
-// GPU kernel declarations (defined in gpu_write_kernels.hip)
+// GPU 内核声明（定义位于 gpu_write_kernels.hip）
 // ============================================================================
 
 extern "C" __global__ void write_indices_to_fpga(
@@ -75,27 +75,27 @@ extern "C" __global__ void scatter_write_to_fpga(
     uint32_t buffer_size);
 
 // ============================================================================
-// Helper: allocate a P2P buffer on the FPGA
+// 辅助功能：在 FPGA 上分配 P2P 缓冲区
 // ============================================================================
 
 struct P2PAllocation {
     xrt::bo    bo;
     void*      host_ptr    = nullptr;
-    void*      device_ptr  = nullptr;   // HIP device pointer
+    void*      device_ptr  = nullptr;   // HIP 设备指针
     size_t     size_bytes  = 0;
-    bool       is_p2p      = false;     // true = P2P BO, false = normal fallback
+    bool       is_p2p      = false;     // true 表示 P2P 缓冲区对象（BO），false 表示回退到普通缓冲区
     bool       gpu_registered = false;
 };
 
 /**
- * Allocate an xrt::bo with the P2P flag, map it, and register it
- * with HIP so that GPU kernels can access it via device_ptr.
+ * 分配带有 P2P 标志的 xrt::bo，将其映射并注册到 HIP，
+ * 使 GPU 内核能够通过 device_ptr 访问该缓冲区。
  */
 P2PAllocation alloc_p2p_buffer(xrt::device& fpga_dev, size_t size_bytes) {
     P2PAllocation alloc;
     alloc.size_bytes = size_bytes;
 
-    // --- 1. Allocate FPGA buffer (try P2P, then fall back to normal) ---
+    // --- 1. 分配 FPGA 缓冲区（先尝试 P2P，失败后回退到普通缓冲区） ---
     bool allocated = false;
     constexpr unsigned kMaxGroups = 32;
 
@@ -120,21 +120,21 @@ P2PAllocation alloc_p2p_buffer(xrt::device& fpga_dev, size_t size_bytes) {
         exit(EXIT_FAILURE);
     }
 
-    // --- 2. Map to host virtual address ---
+    // --- 2. 映射到主机虚拟地址 ---
     alloc.host_ptr = alloc.bo.map();
     if (!alloc.host_ptr) {
         std::cerr << "Fatal: xrt::bo::map() returned nullptr" << std::endl;
         exit(EXIT_FAILURE);
     }
 
-    // --- 3. Register with HIP ---
+    // --- 3. 向 HIP 注册 ---
     hipError_t err = hipHostRegister(
         alloc.host_ptr, size_bytes,
         hipHostRegisterMapped | hipHostRegisterIoMemory);
 
     if (err != hipSuccess) {
-        // IoMemory may fail if IOMMU blocks it; fall back.
-        // This is no longer true P2P — syncs will be required.
+        // 如果 IOMMU 阻止访问，IoMemory 注册可能失败，此时采用回退方式。
+        // 此时不再是真正的 P2P，需要执行同步操作。
         std::cerr << "  Warning: hipHostRegisterIoMemory failed ("
                   << hipGetErrorString(err) << "), retrying with Mapped only" << std::endl;
         alloc.is_p2p = false;
@@ -160,7 +160,7 @@ void free_p2p_buffer(P2PAllocation& alloc) {
 }
 
 // ============================================================================
-// Test 1: Simple sequential write
+// 测试 1：简单顺序写入
 // ============================================================================
 
 bool test_sequential_write(xrt::device& fpga_dev) {
@@ -169,18 +169,18 @@ bool test_sequential_write(xrt::device& fpga_dev) {
     constexpr uint32_t COUNT = 1024;
     constexpr size_t   BYTES = COUNT * sizeof(uint32_t);
 
-    // Allocate P2P buffer
+    // 分配 P2P 缓冲区
     auto alloc = alloc_p2p_buffer(fpga_dev, BYTES);
     std::cout << "  P2P buffer: " << BYTES << " B, is_p2p="
               << alloc.is_p2p << std::endl;
 
-    // Clear the buffer from the host side so we can verify writes later
+    // 从主机端将缓冲区清零，以便随后验证写入结果
     std::memset(alloc.host_ptr, 0, BYTES);
     if (!alloc.is_p2p) {
         alloc.bo.sync(XCL_BO_SYNC_BO_TO_DEVICE);
     }
 
-    // Prepare source data in GPU global memory
+    // 在 GPU 全局内存中准备源数据
     uint32_t* d_src;
     HIP_CHECK(hipMalloc(&d_src, BYTES));
 
@@ -188,7 +188,7 @@ bool test_sequential_write(xrt::device& fpga_dev) {
     std::iota(src_host.begin(), src_host.end(), 100);   // 100, 101, 102, ...
     HIP_CHECK(hipMemcpy(d_src, src_host.data(), BYTES, hipMemcpyHostToDevice));
 
-    // Launch GPU kernel: write from GPU mem → FPGA P2P buffer
+    // 启动 GPU 内核：从 GPU 内存写入 FPGA P2P 缓冲区
     dim3 threads(256);
     dim3 blocks((COUNT + 255) / 256);
 
@@ -204,10 +204,10 @@ bool test_sequential_write(xrt::device& fpga_dev) {
     double us = std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count();
     std::cout << "  GPU kernel + sync: " << us << " us" << std::endl;
 
-    // --- Synchronise before verification ---
-    // For non-P2P: push host shadow to FPGA, then pull back to verify.
-    // For P2P: sync from device to ensure the host mapping observes
-    // GPU writes on platforms where the BAR isn't CPU-coherent.
+    // --- 验证前执行同步 ---
+    // 非 P2P 模式：先将主机端影子副本同步到 FPGA，再读回以进行验证。
+    // P2P 模式：从设备端同步，以确保在 BAR 不与 CPU 保持缓存一致性
+    // 的平台上，主机映射也能看到 GPU 写入的数据。
     if (!alloc.is_p2p) {
         std::cout << "  (non-P2P fallback) calling sync_to_device..." << std::endl;
         alloc.bo.sync(XCL_BO_SYNC_BO_TO_DEVICE);
@@ -238,7 +238,7 @@ bool test_sequential_write(xrt::device& fpga_dev) {
 }
 
 // ============================================================================
-// Test 2: GPU generates a pattern directly into FPGA buffer (no staging)
+// 测试 2：GPU 直接在 FPGA 缓冲区中生成规律数据（无需中转缓冲）
 // ============================================================================
 
 bool test_pattern_generation(xrt::device& fpga_dev) {
@@ -290,7 +290,7 @@ bool test_pattern_generation(xrt::device& fpga_dev) {
 }
 
 // ============================================================================
-// Test 3: Scatter-write to FPGA
+// 测试 3：向 FPGA 散写
 // ============================================================================
 
 bool test_scatter_write(xrt::device& fpga_dev) {
@@ -301,22 +301,22 @@ bool test_scatter_write(xrt::device& fpga_dev) {
     constexpr size_t   BYTES = BUFFER_SIZE * sizeof(uint32_t);
 
     auto alloc = alloc_p2p_buffer(fpga_dev, BYTES);
-    // Fill with sentinel value so we can verify only written positions changed
+    // 填入哨兵值，以便验证是否只有写入位置发生了变化
     std::memset(alloc.host_ptr, 0xFF, BYTES);
     if (!alloc.is_p2p) alloc.bo.sync(XCL_BO_SYNC_BO_TO_DEVICE);
 
-    // Generate unique random scatter indices on host
+    // 在主机端生成互不重复的随机散写索引
     std::mt19937 rng(7);
     std::set<uint32_t> idx_set;
     std::uniform_int_distribution<uint32_t> dist(0, BUFFER_SIZE - 1);
     while (idx_set.size() < WRITE_COUNT) idx_set.insert(dist(rng));
     std::vector<uint32_t> indices(idx_set.begin(), idx_set.end());
 
-    // Data to write: value = index * 10
+    // 待写入的数据：值 = 索引 * 10
     std::vector<uint32_t> data(WRITE_COUNT);
     for (uint32_t i = 0; i < WRITE_COUNT; i++) data[i] = indices[i] * 10;
 
-    // Upload to GPU
+    // 上传到 GPU
     uint32_t *d_data, *d_indices;
     HIP_CHECK(hipMalloc(&d_data,    WRITE_COUNT * sizeof(uint32_t)));
     HIP_CHECK(hipMalloc(&d_indices, WRITE_COUNT * sizeof(uint32_t)));
@@ -363,13 +363,13 @@ bool test_scatter_write(xrt::device& fpga_dev) {
 }
 
 // ============================================================================
-// Test 4: Bandwidth benchmark (GPU → FPGA)
+// 测试 4：带宽基准测试（GPU → FPGA）
 // ============================================================================
 
 void test_bandwidth(xrt::device& fpga_dev) {
     std::cout << "\n--- Test 4: GPU→FPGA write bandwidth ---" << std::endl;
 
-    // Test several sizes
+    // 测试多种数据大小
     const std::vector<size_t> sizes = {
         4 * 1024,           //   4 KB
         64 * 1024,          //  64 KB
@@ -381,7 +381,7 @@ void test_bandwidth(xrt::device& fpga_dev) {
         uint32_t count = bytes / sizeof(uint32_t);
         auto alloc = alloc_p2p_buffer(fpga_dev, bytes);
 
-        // Prepare GPU source
+        // 准备 GPU 端源数据
         uint32_t* d_src;
         HIP_CHECK(hipMalloc(&d_src, bytes));
         HIP_CHECK(hipMemset(d_src, 0xAB, bytes));
@@ -392,7 +392,7 @@ void test_bandwidth(xrt::device& fpga_dev) {
         constexpr int WARMUP = 5;
         constexpr int ITERS  = 50;
 
-        // Warm up
+        // 预热
         for (int i = 0; i < WARMUP; i++) {
             hipLaunchKernelGGL(write_indices_to_fpga, blocks, threads, 0, 0,
                                d_src, static_cast<uint32_t*>(alloc.device_ptr), count);
@@ -403,7 +403,7 @@ void test_bandwidth(xrt::device& fpga_dev) {
             std::cout << "  WARNING: non-P2P fallback — bandwidth includes XRT sync cost" << std::endl;
         }
 
-        // Timed iterations
+        // 执行计时迭代
         auto t0 = std::chrono::high_resolution_clock::now();
         for (int i = 0; i < ITERS; i++) {
             hipLaunchKernelGGL(write_indices_to_fpga, blocks, threads, 0, 0,
@@ -434,13 +434,13 @@ void test_bandwidth(xrt::device& fpga_dev) {
 }
 
 // ============================================================================
-// Main
+// 主函数
 // ============================================================================
 
 int main() {
     std::cout << "=== GPU → FPGA P2P Transfer Demo ===" << std::endl;
 
-    // --- Find FPGA ---
+    // --- 查找 FPGA ---
     std::cout << "\n[Init] Scanning for FPGA devices..." << std::endl;
     xrt::device fpga_dev;
     bool found = false;
@@ -460,7 +460,7 @@ int main() {
         return EXIT_FAILURE;
     }
 
-    // --- Find GPU ---
+    // --- 查找 GPU ---
     std::cout << "\n[Init] Scanning for GPU devices..." << std::endl;
     int gpu_count = 0;
     HIP_CHECK(hipGetDeviceCount(&gpu_count));
@@ -473,7 +473,7 @@ int main() {
     HIP_CHECK(hipGetDeviceProperties(&props, 0));
     std::cout << "  Using GPU 0: " << props.name << std::endl;
 
-    // --- Run tests ---
+    // --- 运行测试 ---
     int pass = 0, fail = 0;
 
     test_sequential_write(fpga_dev)  ? pass++ : fail++;

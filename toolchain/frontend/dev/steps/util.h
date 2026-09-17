@@ -7,16 +7,16 @@ namespace heteromm {
 namespace step {
 
 /**
- * @brief Enum representing the kernel execution target
+ * @brief 表示内核执行目标的枚举
  */
 enum class KernelType {
-    CPU,     // CPU/GPU kernel (standard compute)
-    GPU,     // Explicitly GPU kernel
-    FPGA,    // FPGA kernel
+    CPU,     // CPU/GPU 内核（常规计算）
+    GPU,     // 明确指定的 GPU 内核
+    FPGA,    // FPGA 内核
 };
 
 /**
- * @brief Convert KernelType to string for logging
+ * @brief 将 KernelType 转换为字符串，用于日志输出
  */
 inline std::string kernel_type_to_string(KernelType type) {
     switch (type) {
@@ -35,10 +35,10 @@ KernelType string_to_kernel_type(const std::string& device) {
     } else if (device == "fpga") {
         return KernelType::FPGA;
     }
-    return KernelType::CPU;  // Default
+    return KernelType::CPU;  // 默认使用 CPU
 }
 
-//[TODO]: add communication handler
+//[TODO]：添加通信处理器
 
 }  // namespace step
 }  // namespace heteromm

@@ -1,9 +1,9 @@
 /**
  * @file compute_score.h
- * @brief ComputeScore step - computes similarity scores between query and memory
+ * @brief ComputeScore 步骤：计算查询与记忆之间的相似度分数
  * 
- * This step handles computing similarity or relevance scores between
- * query vectors and memory entries.
+ * 本步骤负责计算查询向量与记忆条目之间的
+ * 相似度或相关性分数。
  */
 
 #ifndef HETEROMM_DEV_STEPS_COMPUTE_SCORE_H_
@@ -23,19 +23,18 @@ namespace heteromm {
 namespace step {
 
 /**
- * @brief Abstract base class for the ComputeScore step
+ * @brief ComputeScore 步骤的抽象基类
  * 
- * Data flow: (Memory, Query) -> ComputeScore -> Score
+ * 数据流： (Memory, Query) -> ComputeScore -> Score
  * 
- * This step computes similarity scores between query vectors and
- * entries in the memory structure. The scores are used to identify
- * the most relevant memory entries.
+ * 本步骤计算查询向量与记忆条目之间的相似度分数，
+ * 利用这些分数识别相关性最高的记忆条目。
  * 
- * Usage:
+ * 用法示例：
  * @code
  *   class DotProductScore : public ComputeScoreStep<MyIndex, MyQuery, MyScore> {
  *       StepStatus run_cpu_kernel(const MyIndex& mem, const MyQuery& q, MyScore& s) override {
- *           // Compute dot products
+ *           // 计算内积
  *       }
  *   };
  * @endcode
@@ -57,7 +56,7 @@ public:
     int execute(
         const MemoryType& memory,
         const QueryType& query,
-        ScoreType& score, // for testing, pass the ground truth
+        ScoreType& score, // 进行功能测试时，在此传入预期的正确结果
         bool run_functional_test = false,
         bool verbose = false
     ) {
@@ -68,7 +67,7 @@ public:
                 std::clog << "  Query Type: " << query.type_name() << std::endl;
                 std::clog << "  Score Type: " << score.type_name() << std::endl;
             }
-            // deep copy score to check
+            // 深拷贝预期分数，供后续结果校验使用
             ScoreType original_score = score;
 
             run_test_kernel(memory, query, score);
@@ -90,7 +89,7 @@ public:
             return 0;
         }
 
-        // consider static schedule first
+        // 先按照静态调度配置选择执行分支
         switch (current_kernel_) {
             case KernelType::CPU:
                 if(verbose) {
@@ -122,7 +121,7 @@ public:
             default:
                 break;
             }
-        // dynamic schedule: call backend
+        // 动态调度：调用后端
         return 0;
     }
 
@@ -165,9 +164,9 @@ private:
 };
 
 /**
- * @brief Inner product (dot product) computation between query vectors and memory
+ * @brief 计算查询向量与记忆向量之间的内积（点积）
  * 
- * Computes dot product similarity scores between a VectorQuery and FlatIndexMemory.
+ * 计算 VectorQuery 与 FlatIndexMemory 中各向量的内积相似度分数。
  */
 class InnerProductCompute : public ComputeScore<
     data_type::FlatIndexMemory<float>,
