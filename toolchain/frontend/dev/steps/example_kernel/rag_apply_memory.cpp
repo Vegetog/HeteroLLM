@@ -1,13 +1,13 @@
 /**
  * @file rag_apply_memory.cpp
- * @brief Implementation of RAGApplyMemory kernels
+ * @brief RAGApplyMemory 各类计算内核的实现
  * 
- * Uses embedded Python interpreter to call rag_apply_memory for
- * building the RAG prompt from retrieved documents and query.
+ * 通过嵌入式 Python 解释器调用 rag_apply_memory，
+ * 根据检索到的文档和查询构建 RAG 提示词。
  *
- * The PY_FUNC attribute is placed here (not in the header) because
- * different users may provide a pure-C++ implementation instead.
- * The PythonDispatchPass scans these .cpp files to detect Python calls.
+ * PY_FUNC 属性放在此处而不是头文件中，因为
+ * 不同用户可能会改用纯 C++ 实现。
+ * PythonDispatchPass 会扫描这些 .cpp 文件，识别其中的 Python 调用。
  */
 
 #include "../apply_memory.h"
@@ -33,7 +33,7 @@ void RAGApplyMemory::run_gpu_kernel(
         Py_Initialize();
     }
 
-    // Add module path to sys.path
+    // 将模块路径加入 sys.path
     PyObject* sys_path = PySys_GetObject("path");
     if (sys_path) {
         PyObject* path_str = PyUnicode_FromString(python_module_path_.c_str());
@@ -41,14 +41,14 @@ void RAGApplyMemory::run_gpu_kernel(
         Py_DECREF(path_str);
     }
 
-    // Import rag_pipeline module
+    // 导入 rag_pipeline 模块
     PyObject* py_module = PyImport_ImportModule("rag_pipeline");
     if (!py_module) {
         PyErr_Print();
         throw std::runtime_error("[RAGApplyMemory] Failed to import rag_pipeline module");
     }
 
-    // Get rag_apply_memory function
+    // 获取 rag_apply_memory 函数
     PyObject* py_func = PyObject_GetAttrString(py_module, "rag_apply_memory");
     if (!py_func || !PyCallable_Check(py_func)) {
         Py_XDECREF(py_func);
@@ -57,12 +57,12 @@ void RAGApplyMemory::run_gpu_kernel(
         throw std::runtime_error("[RAGApplyMemory] rag_apply_memory not found or not callable");
     }
 
-    // Build Python list of document token lists from TextDBData
+    // 根据 TextDBData 构造由各文档 token 列表组成的 Python 列表
     const auto& all_docs = retrieved_data.export_data();
     const auto& topk_indices = index.export_data();
     const auto& input_tokens = input.export_data();
 
-    // Create Python list of retrieved document token lists
+    // 创建 Python 列表，保存检索到的各篇文档的 token 列表
     PyObject* py_doc_list = PyList_New(topk_indices.size());
     for (size_t i = 0; i < topk_indices.size(); ++i) {
         int doc_idx = topk_indices[i];
@@ -78,16 +78,16 @@ void RAGApplyMemory::run_gpu_kernel(
         }
     }
 
-    // Create Python list of input tokens (query)
+    // 为输入 token（查询）创建 Python 列表
     PyObject* py_input_tokens = PyList_New(input_tokens.size());
     for (size_t i = 0; i < input_tokens.size(); ++i) {
         PyList_SetItem(py_input_tokens, i, PyLong_FromLong(input_tokens[i]));
     }
 
-    // Create Python string for model name
+    // 为模型名称创建 Python 字符串
     PyObject* py_model_name = PyUnicode_FromString(model_name_.c_str());
 
-    // Call rag_apply_memory(doc_list, input_tokens, model_name)
+    // 调用 rag_apply_memory(doc_list, input_tokens, model_name)
     PyObject* py_args = PyTuple_New(3);
     PyTuple_SetItem(py_args, 0, py_doc_list);
     PyTuple_SetItem(py_args, 1, py_input_tokens);
@@ -103,7 +103,7 @@ void RAGApplyMemory::run_gpu_kernel(
         throw std::runtime_error("[RAGApplyMemory] rag_apply_memory() call failed");
     }
 
-    // Result is a Python list of token IDs (the RAG prompt)
+    // 返回结果是包含 token ID 的 Python 列表，表示 RAG 提示词
     std::vector<int> output_tokens;
     if (PyList_Check(py_result)) {
         Py_ssize_t list_size = PyList_Size(py_result);
@@ -129,7 +129,7 @@ void RAGApplyMemory::run_cpu_kernel(
     const data_type::TextInputOutputData<int>& input,
     data_type::TextInputOutputData<int>& output
 ) {
-    // Simple CPU concatenation: input tokens + retrieved doc tokens
+    // CPU 上的简单拼接：输入 token + 检索到的文档 token
     const auto& all_docs = retrieved_data.export_data();
     const auto& topk_indices = index.export_data();
     const auto& input_tokens = input.export_data();
@@ -137,10 +137,10 @@ void RAGApplyMemory::run_cpu_kernel(
     std::vector<int> output_tokens;
     output_tokens.reserve(input_tokens.size() + topk_indices.size() * 100);
 
-    // Start with input tokens (query)
+    // 先写入输入 token（查询）
     output_tokens.insert(output_tokens.end(), input_tokens.begin(), input_tokens.end());
 
-    // Append retrieved document tokens
+    // 追加检索到的文档 token
     for (int doc_idx : topk_indices) {
         if (doc_idx >= 0 && doc_idx < static_cast<int>(all_docs.size())) {
             const auto& doc_tokens = all_docs[doc_idx];
@@ -161,7 +161,7 @@ void RAGApplyMemory::run_fpga_kernel(
     const data_type::TextInputOutputData<int>& input,
     data_type::TextInputOutputData<int>& output
 ) {
-    // FPGA not used for apply_memory in RAG
+    // RAG 的 apply_memory 步骤不使用 FPGA
     std::clog << "[RAGApplyMemory] FPGA kernel not implemented. Falling back to CPU." << std::endl;
     run_cpu_kernel(retrieved_data, index, input, output);
 }
@@ -172,7 +172,7 @@ void RAGApplyMemory::run_test_kernel(
     const data_type::TextInputOutputData<int>& input,
     data_type::TextInputOutputData<int>& output
 ) {
-    // For testing, use the CPU implementation
+    // 测试时使用 CPU 实现
     run_cpu_kernel(retrieved_data, index, input, output);
 }
 

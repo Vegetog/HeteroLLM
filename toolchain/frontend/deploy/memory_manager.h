@@ -1,22 +1,22 @@
 /**
  * @file memory_manager.h
- * @brief MemoryManager base class for pipeline orchestration
+ * @brief 用于组织流水线执行的 MemoryManager 基类
  * 
- * Provides the main interface for building memory, managing retrieval,
- * and applying memory in a unified workflow.
+ * 提供构建记忆、管理检索和应用记忆的主要接口，
+ * 将这些操作组织到统一的工作流程中。
  */
 
 #ifndef HETEROMM_DEPLOY_MEMORY_MANAGER_H_
 #define HETEROMM_DEPLOY_MEMORY_MANAGER_H_
 
-// Include step definitions from dev folder
+// 引入 dev 目录中的步骤定义
 #include "../dev/steps/util.h"
 #include "../dev/steps/build_memory.h"
 #include "../dev/steps/compute_score.h"
 #include "../dev/steps/memory_retrieval.h"
 #include "../dev/steps/apply_memory.h"
 
-// Include type definitions from dev folder
+// 引入 dev 目录中的数据类型定义
 #include "../dev/types/base_types.h"
 #include "../dev/types/memory.h"
 #include "../dev/types/query.h"
@@ -36,7 +36,7 @@ namespace heteromm {
 namespace deploy {
 
 /**
- * @brief Configuration for kernel types across pipeline steps
+ * @brief 流水线各步骤的内核类型配置
  */
 struct PipelineKernelConfig {
     step::KernelType build_memory = step::KernelType::CPU;
@@ -53,14 +53,14 @@ struct PipelineKernelConfig {
 };
 
 /**
- * @brief Execution result from memory manager operations
+ * @brief 记忆管理器操作的执行结果
  */
 struct ExecutionResult {
     bool success = false;
     std::string error_message;
     double total_time_ms = 0.0;
     
-    // Timing breakdown
+    // 各步骤耗时明细
     double build_memory_time_ms = 0.0;
     double compute_score_time_ms = 0.0;
     double retrieval_time_ms = 0.0;
@@ -82,40 +82,40 @@ struct ExecutionResult {
 };
 
 /**
- * @brief Memory Manager base class
+ * @brief 记忆管理器基类
  * 
- * This class orchestrates the full retrieval-augmented pipeline:
+ * 本类负责组织完整的检索增强流水线：
  * 1. build_memory: RetrievedData -> Memory
  * 2. compute_score: (Memory, Query) -> Score
  * 3. memory_retrieval: Score -> RetrievedIndex
  * 4. apply_memory: (RetrievedData, RetrievedIndex, TargetData) -> TargetData
  * 
- * Three main entry points are provided:
- * - build_memory(): Just build the memory structure
- * - manage_memory_and_apply(): Given built memory, run query->output
- * - build_and_apply_memory(): Full pipeline from raw data to output
+ * 提供三个主要入口：
+ * - build_memory(): 仅构建记忆结构
+ * - manage_memory_and_apply(): 使用已构建的记忆，执行从查询到输出的流程
+ * - build_and_apply_memory(): 执行从原始数据到输出的完整流水线
  * 
- * Users should create new classes inheriting from this base to:
- * - Provide custom step handlers
- * - Configure kernel types for each step
- * - Add logging, profiling, or other customizations
+ * 用户可以通过继承本基类创建新类，以实现：
+ * - 提供自定义的步骤实现对象
+ * - 配置每个步骤的内核类型
+ * - 添加日志、性能分析或其他自定义功能
  * 
- * The three main functions are for use, NOT for reimplementation.
- * Customization should happen via step handlers and factory methods.
+ * 三个主要函数供调用使用，不应重新实现。
+ * 自定义功能应通过步骤实现对象和工厂方法完成。
  * 
- * @tparam RetDataT Type derived from data_type::RetrievedData
- * @tparam MemoryT Type derived from data_type::Memory
- * @tparam QueryT Type derived from data_type::Query
- * @tparam ScoreT Type derived from data_type::Score
- * @tparam IndexT Type derived from data_type::RetrievedIndex
- * @tparam InputT Type derived from data_type::TargetData (input to apply_memory)
- * @tparam OutputT Type derived from data_type::TargetData (output of apply_memory)
+ * @tparam RetDataT 派生自 data_type::RetrievedData 的类型
+ * @tparam MemoryT 派生自 data_type::Memory 的类型
+ * @tparam QueryT 派生自 data_type::Query 的类型
+ * @tparam ScoreT 派生自 data_type::Score 的类型
+ * @tparam IndexT 派生自 data_type::RetrievedIndex 的类型
+ * @tparam InputT 派生自 data_type::TargetData 的类型，作为 apply_memory 的输入
+ * @tparam OutputT 派生自 data_type::TargetData 的类型，作为 apply_memory 的输出
  */
 template<typename RetDataT, typename MemoryT, typename QueryT,
          typename ScoreT, typename IndexT, typename InputT, typename OutputT>
 class MemoryManager {
 public:
-    // Type aliases for convenience
+    // 为便于使用而定义的类型别名
     using RetrievedData = RetDataT;
     using Memory = MemoryT;
     using Query = QueryT;
@@ -124,15 +124,15 @@ public:
     using Input = InputT;
     using Output = OutputT;
     
-    // Step types using dev folder step classes
+    // 使用 dev 目录中的步骤类定义各阶段的类型
     using BuildMemoryStepT = step::BuildMemory<RetDataT, MemoryT>;
     using ComputeScoreStepT = step::ComputeScore<MemoryT, QueryT, ScoreT>;
     using MemoryRetrievalStepT = step::MemoryRetrieval<ScoreT, IndexT>;
     using ApplyMemoryStepT = step::ApplyMemory<RetDataT, IndexT, InputT, OutputT>;
     
     /**
-     * @brief Default constructor with CPU kernels for all steps
-     * @param schedule_path Path to the schedule JSON file (optional)
+     * @brief 默认构造函数：所有步骤的内核类型初始化为 CPU
+     * @param schedule_path 调度配置 JSON 文件的路径（可选）
      */
     explicit MemoryManager(const std::string& schedule_path = "") 
         : kernel_config_(){
@@ -142,9 +142,9 @@ public:
     }
     
     /**
-     * @brief Constructor with kernel configuration
-     * @param schedule_path Path to the schedule JSON file
-     * @param config Kernel configuration for each pipeline step
+     * @brief 接收内核配置的构造函数
+     * @param schedule_path 调度配置 JSON 文件的路径
+     * @param config 流水线每个步骤的内核配置
      */
     MemoryManager(const std::string& schedule_path, const PipelineKernelConfig& config) 
         : kernel_config_(config){
@@ -155,120 +155,120 @@ public:
     
     virtual ~MemoryManager() = default;
     
-    // ===== Kernel configuration setters =====
+    // ===== 内核配置设置函数 =====
     
     /**
-     * @brief Set the kernel configuration for all steps
-     * @param config Kernel configuration
+     * @brief 设置所有步骤的内核配置
+     * @param config 内核配置
      */
     void set_kernel_config(const PipelineKernelConfig& config) {
         kernel_config_ = config;
     }
     
     /**
-     * @brief Set the kernel type for build_memory step
-     * @param type Kernel type (CPU, GPU, FPGA)
+     * @brief 设置 build_memory 步骤的内核类型
+     * @param type 内核类型（CPU、GPU 或 FPGA）
      */
     void set_build_memory_kernel(step::KernelType type) {
         kernel_config_.build_memory = type;
     }
     
     /**
-     * @brief Set the kernel type for compute_score step
-     * @param type Kernel type (CPU, GPU, FPGA)
+     * @brief 设置 compute_score 步骤的内核类型
+     * @param type 内核类型（CPU、GPU 或 FPGA）
      */
     void set_compute_score_kernel(step::KernelType type) {
         kernel_config_.compute_score = type;
     }
     
     /**
-     * @brief Set the kernel type for memory_retrieval step
-     * @param type Kernel type (CPU, GPU, FPGA)
+     * @brief 设置 memory_retrieval 步骤的内核类型
+     * @param type 内核类型（CPU、GPU 或 FPGA）
      */
     void set_memory_retrieval_kernel(step::KernelType type) {
         kernel_config_.memory_retrieval = type;
     }
     
     /**
-     * @brief Set the kernel type for apply_memory step
-     * @param type Kernel type (CPU, GPU, FPGA)
+     * @brief 设置 apply_memory 步骤的内核类型
+     * @param type 内核类型（CPU、GPU 或 FPGA）
      */
     void set_apply_memory_kernel(step::KernelType type) {
         kernel_config_.apply_memory = type;
     }
     
     /**
-     * @brief Get the current kernel configuration
-     * @return Current kernel configuration
+     * @brief 获取当前内核配置
+     * @return 当前内核配置
      */
     const PipelineKernelConfig& get_kernel_config() const {
         return kernel_config_;
     }
     
     /**
-     * @brief Get the schedule configuration
-     * @return Schedule configuration
+     * @brief 获取调度配置
+     * @return 调度配置
      */
     const ScheduleConfig& get_schedule_config() const {
         return schedule_config_;
     }
     
-    // ===== Step handler setters (for customization) =====
+    // ===== 步骤实现对象的设置函数（用于自定义） =====
     
     /**
-     * @brief Set the build memory step handler
+     * @brief 设置构建记忆步骤的实现对象
      */
     void set_build_memory_step(std::shared_ptr<BuildMemoryStepT> step) {
         build_memory_step_ = std::move(step);
     }
     
     /**
-     * @brief Set the compute score step handler
+     * @brief 设置相关性计算步骤的实现对象
      */
     void set_compute_score_step(std::shared_ptr<ComputeScoreStepT> step) {
         compute_score_step_ = std::move(step);
     }
     
     /**
-     * @brief Set the memory retrieval step handler
+     * @brief 设置记忆检索步骤的实现对象
      */
     void set_memory_retrieval_step(std::shared_ptr<MemoryRetrievalStepT> step) {
         memory_retrieval_step_ = std::move(step);
     }
     
     /**
-     * @brief Set the apply memory step handler
+     * @brief 设置记忆应用步骤的实现对象
      */
     void set_apply_memory_step(std::shared_ptr<ApplyMemoryStepT> step) {
         apply_memory_step_ = std::move(step);
     }
     
-    // ===== Factory methods (override to provide custom handlers) =====
+    // ===== 工厂方法（通过重写提供自定义步骤实现对象） =====
     
     /**
-     * @brief Create a build memory step handler
-     * Override this to provide a custom implementation.
+     * @brief 创建构建记忆步骤的实现对象
+     * 重写此方法以提供自定义实现。
      */
     virtual std::shared_ptr<BuildMemoryStepT> create_build_memory_step() {
-        return nullptr;  // Must be overridden or set manually
+        return nullptr;  // 必须重写此方法，或手动设置步骤实现对象
     }
     
     /**
-     * @brief Create a compute score step handler
+     * @brief 创建相关性计算步骤的实现对象
      */
     virtual std::shared_ptr<ComputeScoreStepT> create_compute_score_step() {
         return nullptr;
     }
     
     /**
-     * @brief Create a memory retrieval step handler
+     * @brief 创建记忆检索步骤的实现对象
      */
     virtual std::shared_ptr<MemoryRetrievalStepT> create_memory_retrieval_step() {
         return nullptr;
     }
     
     /**
-     * @brief Create an apply memory step handler
+     * @brief 创建记忆应用步骤的实现对象
      */
     virtual std::shared_ptr<ApplyMemoryStepT> create_apply_memory_step() {
         return nullptr;
@@ -277,22 +277,22 @@ public:
     virtual int ret_data_size(RetDataT& retrieved_data) = 0;
     virtual int memory_size(MemoryT& memory) = 0;
     
-    // ===== Main API functions (NOT for reimplementation) =====
+    // ===== 主要 API 函数（供调用使用，不应重新实现） =====
     
     /**
-     * @brief Build memory structure from retrieved data
+     * @brief 根据检索数据构建记忆结构
      * 
-     * This function handles only the build_memory step.
-     * Use this when memory building is a separate, potentially
-     * offline process.
+     * 本函数仅执行 build_memory 步骤。
+     * 当记忆构建是独立的过程，
+     * 并且可能离线执行时，使用此函数。
      * 
-     * Note: Kernel type should be configured via set_build_memory_kernel()
-     * or set_kernel_config() before calling this function.
+     * 注意：调用本函数前，应通过 set_build_memory_kernel()
+     * 或 set_kernel_config() 配置内核类型。
      * 
-     * @param retrieved_data Input retrieved data
-     * @param memory Output memory structure
-     * @param verbose Enable verbose logging
-     * @return Execution result
+     * @param retrieved_data 输入的检索数据
+     * @param memory 输出的记忆结构
+     * @param verbose 是否启用详细日志
+     * @return 执行结果
      */
     ExecutionResult build_memory(
             const RetDataT& retrieved_data,
@@ -325,25 +325,25 @@ public:
     }
     
     /**
-     * @brief Manage memory and apply to produce output
+     * @brief 管理并应用记忆，生成输出
      * 
-     * This function handles:
+     * 本函数执行以下步骤：
      * - compute_score: (memory, query) -> scores
      * - memory_retrieval: scores -> indices
      * - apply_memory: (retrieved_data, indices, input) -> output
      * 
-     * Use this when memory is already built.
+     * 当记忆已经构建完成时，使用此函数。
      * 
-     * Note: Kernel types should be configured via set_*_kernel()
-     * or set_kernel_config() before calling this function.
+     * 注意：调用本函数前，应通过 set_*_kernel()
+     * 或 set_kernel_config() 配置内核类型。
      * 
-     * @param retrieved_data Original retrieved data (for apply_memory)
-     * @param memory Pre-built memory structure
-     * @param query Query to search for
-     * @param input Additional input data
-     * @param output Output result
-     * @param verbose Enable verbose logging
-     * @return Execution result
+     * @param retrieved_data 原始检索数据，供 apply_memory 使用
+     * @param memory 预先构建的记忆结构
+     * @param query 用于检索的查询
+     * @param input 额外输入数据
+     * @param output 输出结果
+     * @param verbose 是否启用详细日志
+     * @return 执行结果
      */
     ExecutionResult manage_memory_and_apply(
             const RetDataT& retrieved_data,
@@ -356,7 +356,7 @@ public:
         ExecutionResult result;
         result.success = true;
 
-        // get config
+        // 获取配置
         int ret_data_size_val = ret_data_size(retrieved_data);
         int memory_size_val = memory_size(memory);
         auto config = schedule_config_.get_manage_memory_and_apply_config(ret_data_size_val, memory_size_val);
@@ -364,7 +364,7 @@ public:
         set_memory_retrieval_kernel(step::string_to_kernel_type(config[1]));
         set_apply_memory_kernel(step::string_to_kernel_type(config[2]));
         
-        // Step 1: Compute scores
+        // 本函数的第 1 步：计算相关性分数（完整流水线的第 2 步）
         auto score_step = get_or_create_compute_score_step();
         if (!score_step) {
             return ExecutionResult::Failure("ComputeScore step not configured");
@@ -381,7 +381,7 @@ public:
         result.compute_score_time_ms = std::chrono::duration<double, std::milli>(
             score_end - score_start).count();
         
-        // Step 2: Memory retrieval
+        // 本函数的第 2 步：检索记忆（完整流水线的第 3 步）
         auto retrieval_step = get_or_create_memory_retrieval_step();
         if (!retrieval_step) {
             return ExecutionResult::Failure("MemoryRetrieval step not configured");
@@ -398,7 +398,7 @@ public:
         result.retrieval_time_ms = std::chrono::duration<double, std::milli>(
             retr_end - retr_start).count();
         
-        // Step 3: Apply memory
+        // 本函数的第 3 步：应用记忆（完整流水线的第 4 步）
         auto apply_step = get_or_create_apply_memory_step();
         if (!apply_step) {
             return ExecutionResult::Failure("ApplyMemory step not configured");
@@ -422,23 +422,23 @@ public:
     }
     
     /**
-     * @brief Build memory and apply in one operation
+     * @brief 一次调用完成记忆构建与应用
      * 
-     * This function handles the complete pipeline:
+     * 本函数执行完整流水线：
      * - build_memory: retrieved_data -> memory
      * - compute_score: (memory, query) -> scores
      * - memory_retrieval: scores -> indices
      * - apply_memory: (retrieved_data, indices, input) -> output
      * 
-     * Note: Kernel types should be configured via set_*_kernel()
-     * or set_kernel_config() before calling this function.
+     * 注意：调用本函数前，应通过 set_*_kernel()
+     * 或 set_kernel_config() 配置内核类型。
      * 
-     * @param retrieved_data Input retrieved data
-     * @param query Query to search for
-     * @param input Additional input data
-     * @param output Output result
-     * @param verbose Enable verbose logging
-     * @return Execution result
+     * @param retrieved_data 输入的检索数据
+     * @param query 用于检索的查询
+     * @param input 额外输入数据
+     * @param output 输出结果
+     * @param verbose 是否启用详细日志
+     * @return 执行结果
      */
     ExecutionResult build_and_apply_memory(
             const RetDataT& retrieved_data,
@@ -455,14 +455,14 @@ public:
         set_memory_retrieval_kernel(step::string_to_kernel_type(config[2]));
         set_apply_memory_kernel(step::string_to_kernel_type(config[3]));
         
-        // Build memory
+        // 构建记忆
         MemoryT memory;
         auto build_result = build_memory(retrieved_data, memory, verbose);
         if (!build_result.success) {
             return build_result;
         }
         
-        // Run remaining steps
+        // 执行其余步骤
         auto apply_result = manage_memory_and_apply(
             retrieved_data, memory, query, input, output, verbose);
         
@@ -470,7 +470,7 @@ public:
             return apply_result;
         }
         
-        // Combine results
+        // 合并执行结果
         ExecutionResult result = apply_result;
         result.build_memory_time_ms = build_result.build_memory_time_ms;
         result.total_time_ms = build_result.total_time_ms + apply_result.total_time_ms;
@@ -479,19 +479,19 @@ public:
     }
     
     /**
-     * @brief Run functional tests on all configured steps
+     * @brief 对所有已配置的步骤执行功能测试
      * 
-     * Tests each step using its test kernel with ground truth data.
+     * 使用各步骤的测试内核进行计算，并与预期的正确结果比较。
      * 
-     * @param retrieved_data Test input data
-     * @param expected_memory Expected memory output
-     * @param query Test query
-     * @param expected_scores Expected scores output
-     * @param expected_indices Expected indices output
-     * @param input Test input for apply_memory
-     * @param expected_output Expected final output
-     * @param verbose Enable verbose logging
-     * @return True if all tests pass
+     * @param retrieved_data 测试输入数据
+     * @param expected_memory 预期的记忆输出
+     * @param query 测试查询
+     * @param expected_scores 预期的分数输出
+     * @param expected_indices 预期的索引输出
+     * @param input apply_memory 的测试输入
+     * @param expected_output 预期的最终输出
+     * @param verbose 是否启用详细日志
+     * @return 所有测试通过时返回 true
      */
     bool run_functional_tests(
             const RetDataT& retrieved_data,
@@ -505,7 +505,7 @@ public:
         
         bool all_passed = true;
         
-        // Test build_memory
+        // 测试 build_memory
         auto build_step = get_or_create_build_memory_step();
         if (build_step) {
             int status = build_step->execute(retrieved_data, expected_memory, true, verbose);
@@ -517,7 +517,7 @@ public:
             }
         }
         
-        // Test compute_score
+        // 测试 compute_score
         auto score_step = get_or_create_compute_score_step();
         if (score_step) {
             int status = score_step->execute(expected_memory, query, expected_scores, true, verbose);
@@ -529,7 +529,7 @@ public:
             }
         }
         
-        // Test memory_retrieval
+        // 测试 memory_retrieval
         auto retrieval_step = get_or_create_memory_retrieval_step();
         if (retrieval_step) {
             int status = retrieval_step->execute(expected_scores, expected_indices, true, verbose);
@@ -541,7 +541,7 @@ public:
             }
         }
         
-        // Test apply_memory
+        // 测试 apply_memory
         auto apply_step = get_or_create_apply_memory_step();
         if (apply_step) {
             int status = apply_step->execute(retrieved_data, expected_indices, input, 
@@ -558,19 +558,19 @@ public:
     }
 
 protected:
-    // Step handlers
+    // 各步骤的实现对象
     std::shared_ptr<BuildMemoryStepT> build_memory_step_;
     std::shared_ptr<ComputeScoreStepT> compute_score_step_;
     std::shared_ptr<MemoryRetrievalStepT> memory_retrieval_step_;
     std::shared_ptr<ApplyMemoryStepT> apply_memory_step_;
     
-    // Kernel configuration
+    // 内核配置
     PipelineKernelConfig kernel_config_;
     
-    // Schedule configuration
+    // 调度配置
     ScheduleConfig schedule_config_;
     
-    // Helper to get or create step handlers and apply kernel configuration
+    // 辅助函数：获取或创建步骤实现对象，并设置其内核配置
     std::shared_ptr<BuildMemoryStepT> get_or_create_build_memory_step() {
         if (!build_memory_step_) {
             build_memory_step_ = create_build_memory_step();
